@@ -41,6 +41,7 @@ type Env = {
   readonly CONVEX_SITE_URL: string;
   readonly WORKER_IDLE_COOLDOWN_MS: string | undefined;
   readonly WORKER_POLL_INTERVAL_MS: string | undefined;
+  readonly WORKER_SCHEDULE_PING: "true" | "false" | undefined;
 };
 
 /**
