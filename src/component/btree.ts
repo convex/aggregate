@@ -27,6 +27,8 @@ export const DEFAULT_MAX_NODE_SIZE = 16;
 export type Key = ConvexValue;
 export type Value = ConvexValue;
 export type Namespace = ConvexValue | undefined;
+export type TreeKey = { aggregateName?: string; namespace?: Namespace };
+export type Tree = Doc<"btree"> | Doc<"namedBtree">;
 
 export function p(v: ConvexValue): string {
   try {
@@ -55,16 +57,17 @@ export async function assertNoPendingOperations(ctx: { db: DatabaseReader }) {
 
 export async function insertHandler(
   ctx: { db: DatabaseWriter },
-  args: { key: Key; value: Value; summand?: number; namespace?: Namespace },
+  args: {
+    key: Key;
+    value: Value;
+    summand?: number;
+    namespace?: Namespace;
+    aggregateName?: string;
+  },
 ) {
-  const tree = await getOrCreateTree(
-    ctx.db,
-    args.namespace,
-    DEFAULT_MAX_NODE_SIZE,
-    true,
-  );
+  const tree = await getOrCreateTree(ctx.db, args, DEFAULT_MAX_NODE_SIZE, true);
   const summand = args.summand ?? 0;
-  const pushUp = await insertIntoNode(ctx, args.namespace, tree.root, {
+  const pushUp = await insertIntoNode(ctx, args, tree.root, {
     k: args.key,
     v: args.value,
     s: summand,
@@ -82,31 +85,22 @@ export async function insertHandler(
       subtrees: [pushUp.leftSubtree, pushUp.rightSubtree],
       aggregate: total,
     });
-    await ctx.db.patch("btree", tree._id, {
-      root: newRoot,
-    });
+    await setTreeRoot(ctx.db, tree, newRoot);
   }
 }
 
 export async function deleteHandler(
   ctx: { db: DatabaseWriter },
-  args: { key: Key; namespace?: Namespace },
+  args: { key: Key; namespace?: Namespace; aggregateName?: string },
 ) {
-  const tree = await getOrCreateTree(
-    ctx.db,
-    args.namespace,
-    DEFAULT_MAX_NODE_SIZE,
-    true,
-  );
-  await deleteFromNode(ctx, args.namespace, tree.root, args.key);
+  const tree = await getOrCreateTree(ctx.db, args, DEFAULT_MAX_NODE_SIZE, true);
+  await deleteFromNode(ctx, args, tree.root, args.key);
   const root = (await ctx.db.get("btreeNode", tree.root))!;
   if (root.items.length === 0 && root.subtrees.length === 1) {
     log(
       `collapsing root ${root._id} because its only child is ${root.subtrees[0]}`,
     );
-    await ctx.db.patch("btree", tree._id, {
-      root: root.subtrees[0],
-    });
+    await setTreeRoot(ctx.db, tree, root.subtrees[0]);
     if (root.aggregate === undefined) {
       // Maintain lazy root even when the root disappears.
       await ctx.db.patch("btreeNode", root.subtrees[0], {
@@ -125,21 +119,27 @@ export async function replaceHandler(
     value: Value;
     summand?: number;
     namespace?: Namespace;
+    aggregateName?: string;
     newNamespace?: Namespace;
   },
 ) {
-  await deleteHandler(ctx, { key: args.currentKey, namespace: args.namespace });
+  await deleteHandler(ctx, {
+    key: args.currentKey,
+    namespace: args.namespace,
+    aggregateName: args.aggregateName,
+  });
   await insertHandler(ctx, {
     key: args.newKey,
     value: args.value,
     summand: args.summand,
     namespace: args.newNamespace,
+    aggregateName: args.aggregateName,
   });
 }
 
 export async function deleteIfExistsHandler(
   ctx: { db: DatabaseWriter },
-  args: { key: Key; namespace?: Namespace },
+  args: { key: Key; namespace?: Namespace; aggregateName?: string },
 ) {
   try {
     await deleteHandler(ctx, args);
@@ -159,6 +159,7 @@ export async function replaceOrInsertHandler(
     value: Value;
     summand?: number;
     namespace?: Namespace;
+    aggregateName?: string;
     newNamespace?: Namespace;
   },
 ) {
@@ -166,6 +167,7 @@ export async function replaceOrInsertHandler(
     await deleteHandler(ctx, {
       key: args.currentKey,
       namespace: args.namespace,
+      aggregateName: args.aggregateName,
     });
   } catch (e) {
     if (!(e instanceof ConvexError && e.data?.code === "DELETE_MISSING_KEY")) {
@@ -177,11 +179,16 @@ export async function replaceOrInsertHandler(
     value: args.value,
     summand: args.summand,
     namespace: args.newNamespace,
+    aggregateName: args.aggregateName,
   });
 }
 
 export const validate = query({
-  args: { namespace: v.optional(v.any()), stale: v.optional(v.boolean()) },
+  args: {
+    namespace: v.optional(v.any()),
+    aggregateName: v.optional(v.string()),
+    stale: v.optional(v.boolean()),
+  },
   handler: async (ctx, { stale, ...args }) => {
     if (!stale) await assertNoPendingOperations(ctx);
     return validateTree(ctx, args);
@@ -190,13 +197,13 @@ export const validate = query({
 
 export async function validateTree(
   ctx: { db: DatabaseReader },
-  args: { namespace?: Namespace },
+  args: { namespace?: Namespace; aggregateName?: string },
 ) {
-  const tree = await getTree(ctx.db, args.namespace);
+  const tree = await getTree(ctx.db, args);
   if (!tree) {
     return;
   }
-  await validateNode(ctx, args.namespace, tree.root, 0);
+  await validateNode(ctx, args, tree.root, 0);
 }
 
 type ValidationResult = {
@@ -205,19 +212,13 @@ type ValidationResult = {
   height: number;
 };
 
-async function MAX_NODE_SIZE(
-  ctx: { db: DatabaseReader },
-  namespace: Namespace,
-) {
-  const tree = await mustGetTree(ctx.db, namespace);
+async function MAX_NODE_SIZE(ctx: { db: DatabaseReader }, treeKey: TreeKey) {
+  const tree = await mustGetTree(ctx.db, treeKey);
   return tree.maxNodeSize;
 }
 
-async function MIN_NODE_SIZE(
-  ctx: { db: DatabaseReader },
-  namespace: Namespace,
-) {
-  const max = await MAX_NODE_SIZE(ctx, namespace);
+async function MIN_NODE_SIZE(ctx: { db: DatabaseReader }, treeKey: TreeKey) {
+  const max = await MAX_NODE_SIZE(ctx, treeKey);
   if (max % 2 !== 0 || max < 4) {
     throw new Error("MAX_NODE_SIZE must be even and at least 4");
   }
@@ -226,7 +227,7 @@ async function MIN_NODE_SIZE(
 
 async function validateNode(
   ctx: { db: DatabaseReader },
-  namespace: Namespace,
+  treeKey: TreeKey,
   node: Id<"btreeNode">,
   depth: number,
 ): Promise<ValidationResult> {
@@ -234,10 +235,10 @@ async function validateNode(
   if (!n) {
     throw new ConvexError(`missing node ${node}`);
   }
-  if (n.items.length > (await MAX_NODE_SIZE(ctx, namespace))) {
+  if (n.items.length > (await MAX_NODE_SIZE(ctx, treeKey))) {
     throw new ConvexError(`node ${node} exceeds max size`);
   }
-  if (depth > 0 && n.items.length < (await MIN_NODE_SIZE(ctx, namespace))) {
+  if (depth > 0 && n.items.length < (await MIN_NODE_SIZE(ctx, treeKey))) {
     throw new ConvexError(`non-root node ${node} has less than min-size`);
   }
   if (n.subtrees.length > 0 && n.items.length + 1 !== n.subtrees.length) {
@@ -253,9 +254,7 @@ async function validateNode(
     }
   }
   const validatedSubtrees = await Promise.all(
-    n.subtrees.map((subtree) =>
-      validateNode(ctx, namespace, subtree, depth + 1),
-    ),
+    n.subtrees.map((subtree) => validateNode(ctx, treeKey, subtree, depth + 1)),
   );
   for (let i = 0; i < n.subtrees.length; i++) {
     // Each subtree's min is greater than the key at the prior index
@@ -311,9 +310,9 @@ async function validateNode(
 /// If k1 or k2 are undefined, that bound is unlimited.
 export async function aggregateBetweenHandler(
   ctx: { db: DatabaseReader },
-  args: { k1?: Key; k2?: Key; namespace?: Namespace },
+  args: { k1?: Key; k2?: Key; namespace?: Namespace; aggregateName?: string },
 ) {
-  const tree = await getTree(ctx.db, args.namespace);
+  const tree = await getTree(ctx.db, args);
   if (tree === null) {
     return { count: 0, sum: 0 };
   }
@@ -384,6 +383,7 @@ export const aggregateBetween = query({
     k1: v.optional(v.any()),
     k2: v.optional(v.any()),
     namespace: v.optional(v.any()),
+    aggregateName: v.optional(v.string()),
     stale: v.optional(v.boolean()),
   },
   returns: aggregate,
@@ -419,9 +419,9 @@ async function aggregateBetweenInNode(
 
 export async function getHandler(
   ctx: { db: DatabaseReader },
-  args: { key: Key; namespace?: Namespace },
+  args: { key: Key; namespace?: Namespace; aggregateName?: string },
 ) {
-  const tree = (await getTree(ctx.db, args.namespace))!;
+  const tree = (await getTree(ctx.db, args))!;
   return await getInNode(ctx.db, tree.root, args.key);
 }
 
@@ -429,6 +429,7 @@ export const get = query({
   args: {
     key: v.any(),
     namespace: v.optional(v.any()),
+    aggregateName: v.optional(v.string()),
     stale: v.optional(v.boolean()),
   },
   returns: v.union(v.null(), itemValidator),
@@ -467,6 +468,7 @@ export const atOffset = query({
     k1: v.optional(v.any()),
     k2: v.optional(v.any()),
     namespace: v.optional(v.any()),
+    aggregateName: v.optional(v.string()),
     stale: v.optional(v.boolean()),
   },
   returns: itemValidator,
@@ -478,7 +480,13 @@ export const atOffset = query({
 
 export async function atOffsetHandler(
   ctx: { db: DatabaseReader },
-  args: { offset: number; k1?: Key; k2?: Key; namespace?: Namespace },
+  args: {
+    offset: number;
+    k1?: Key;
+    k2?: Key;
+    namespace?: Namespace;
+    aggregateName?: string;
+  },
 ) {
   if (args.offset < 0) {
     throw new Error("offset must be non-negative");
@@ -486,7 +494,7 @@ export async function atOffsetHandler(
   if (!Number.isInteger(args.offset)) {
     throw new Error("offset must be an integer");
   }
-  const tree = await getTree(ctx.db, args.namespace);
+  const tree = await getTree(ctx.db, args);
   if (tree === null) {
     throw new ConvexError("tree is empty");
   }
@@ -499,6 +507,7 @@ export const atNegativeOffset = query({
     k1: v.optional(v.any()),
     k2: v.optional(v.any()),
     namespace: v.optional(v.any()),
+    aggregateName: v.optional(v.string()),
     stale: v.optional(v.boolean()),
   },
   returns: itemValidator,
@@ -510,7 +519,13 @@ export const atNegativeOffset = query({
 
 export async function atNegativeOffsetHandler(
   ctx: { db: DatabaseReader },
-  args: { offset: number; k1?: Key; k2?: Key; namespace?: Namespace },
+  args: {
+    offset: number;
+    k1?: Key;
+    k2?: Key;
+    namespace?: Namespace;
+    aggregateName?: string;
+  },
 ) {
   if (args.offset < 0) {
     throw new Error("offset must be non-negative");
@@ -518,7 +533,7 @@ export async function atNegativeOffsetHandler(
   if (!Number.isInteger(args.offset)) {
     throw new Error("offset must be an integer");
   }
-  const tree = await getTree(ctx.db, args.namespace);
+  const tree = await getTree(ctx.db, args);
   if (tree === null) {
     throw new ConvexError("tree is empty");
   }
@@ -533,13 +548,14 @@ export async function atNegativeOffsetHandler(
 
 export async function offsetHandler(
   ctx: { db: DatabaseReader },
-  args: { key: Key; k1?: Key; namespace?: Namespace },
+  args: { key: Key; k1?: Key; namespace?: Namespace; aggregateName?: string },
 ) {
   return (
     await aggregateBetweenHandler(ctx, {
       k1: args.k1,
       k2: args.key,
       namespace: args.namespace,
+      aggregateName: args.aggregateName,
     })
   ).count;
 }
@@ -550,6 +566,7 @@ export const offset = query({
     key: v.any(),
     k1: v.optional(v.any()),
     namespace: v.optional(v.any()),
+    aggregateName: v.optional(v.string()),
     stale: v.optional(v.boolean()),
   },
   returns: v.number(),
@@ -561,13 +578,14 @@ export const offset = query({
 
 export async function offsetUntilHandler(
   ctx: { db: DatabaseReader },
-  args: { key: Key; k2?: Key; namespace?: Namespace },
+  args: { key: Key; k2?: Key; namespace?: Namespace; aggregateName?: string },
 ) {
   return (
     await aggregateBetweenHandler(ctx, {
       k1: args.key,
       k2: args.k2,
       namespace: args.namespace,
+      aggregateName: args.aggregateName,
     })
   ).count;
 }
@@ -578,6 +596,7 @@ export const offsetUntil = query({
     key: v.any(),
     k2: v.optional(v.any()),
     namespace: v.optional(v.any()),
+    aggregateName: v.optional(v.string()),
     stale: v.optional(v.boolean()),
   },
   returns: v.number(),
@@ -589,7 +608,7 @@ export const offsetUntil = query({
 
 async function deleteFromNode(
   ctx: { db: DatabaseWriter },
-  namespace: Namespace,
+  treeKey: TreeKey,
   node: Id<"btreeNode">,
   key: Key,
 ): Promise<Item | null> {
@@ -640,7 +659,7 @@ async function deleteFromNode(
       message: `key ${p(key)} not found in node ${n._id}`,
     });
   }
-  const deleted = await deleteFromNode(ctx, namespace, n.subtrees[i], key);
+  const deleted = await deleteFromNode(ctx, treeKey, n.subtrees[i], key);
   if (!deleted) {
     return null;
   }
@@ -656,7 +675,7 @@ async function deleteFromNode(
 
   // Now we need to check if the subtree at index i is too small
   const deficientSubtree = (await ctx.db.get("btreeNode", n.subtrees[i]))!;
-  const minNodeSize = await MIN_NODE_SIZE(ctx, namespace);
+  const minNodeSize = await MIN_NODE_SIZE(ctx, treeKey);
   if (deficientSubtree.items.length < minNodeSize) {
     log(`deficient subtree ${deficientSubtree._id}`);
     // If the subtree is too small, we need to rebalance
@@ -914,7 +933,7 @@ type PushUp = {
 
 async function insertIntoNode(
   ctx: { db: DatabaseWriter },
-  namespace: Namespace,
+  treeKey: TreeKey,
   node: Id<"btreeNode">,
   item: Item,
 ): Promise<PushUp | null> {
@@ -933,7 +952,7 @@ async function insertIntoNode(
   // insert key before index i
   if (n.subtrees.length > 0) {
     // insert into subtree
-    const pushUp = await insertIntoNode(ctx, namespace, n.subtrees[i], item);
+    const pushUp = await insertIntoNode(ctx, treeKey, n.subtrees[i], item);
     if (pushUp) {
       await ctx.db.patch("btreeNode", node, {
         items: [...n.items.slice(0, i), pushUp.item, ...n.items.slice(i)],
@@ -958,8 +977,8 @@ async function insertIntoNode(
   }
 
   const newN = (await ctx.db.get("btreeNode", node))!;
-  const maxNodeSize = await MAX_NODE_SIZE(ctx, namespace);
-  const minNodeSize = await MIN_NODE_SIZE(ctx, namespace);
+  const maxNodeSize = await MAX_NODE_SIZE(ctx, treeKey);
+  const minNodeSize = await MIN_NODE_SIZE(ctx, treeKey);
   if (newN.items.length > maxNodeSize) {
     if (
       newN.items.length !== maxNodeSize + 1 ||
@@ -1030,15 +1049,47 @@ function compareKeys(k1: Key, k2: Key) {
   return compareValues(k1, k2);
 }
 
-export async function getTree(db: DatabaseReader, namespace: Namespace) {
+export async function getTree(
+  db: DatabaseReader,
+  treeKey: TreeKey,
+): Promise<Tree | null> {
+  const { aggregateName, namespace } = treeKey;
+  if (aggregateName === undefined) {
+    return await db
+      .query("btree")
+      .withIndex("by_namespace", (q) => q.eq("namespace", namespace))
+      .unique();
+  }
   return await db
-    .query("btree")
-    .withIndex("by_namespace", (q) => q.eq("namespace", namespace))
+    .query("namedBtree")
+    .withIndex("by_aggregateName_namespace", (q) =>
+      q.eq("aggregateName", aggregateName).eq("namespace", namespace),
+    )
     .unique();
 }
 
-export async function mustGetTree(db: DatabaseReader, namespace: Namespace) {
-  const tree = await getTree(db, namespace);
+async function setTreeRoot(
+  db: DatabaseWriter,
+  tree: Tree,
+  root: Id<"btreeNode">,
+) {
+  if ("aggregateName" in tree) {
+    await db.patch("namedBtree", tree._id, { root });
+  } else {
+    await db.patch("btree", tree._id, { root });
+  }
+}
+
+export async function deleteTree(db: DatabaseWriter, tree: Tree) {
+  if ("aggregateName" in tree) {
+    await db.delete("namedBtree", tree._id);
+  } else {
+    await db.delete("btree", tree._id);
+  }
+}
+
+export async function mustGetTree(db: DatabaseReader, treeKey: TreeKey) {
+  const tree = await getTree(db, treeKey);
   if (!tree) {
     throw new Error("btree not initialized");
   }
@@ -1047,11 +1098,11 @@ export async function mustGetTree(db: DatabaseReader, namespace: Namespace) {
 
 export async function getOrCreateTree(
   db: DatabaseWriter,
-  namespace: Namespace,
+  treeKey: TreeKey,
   maxNodeSize?: number,
   rootLazy?: boolean,
-): Promise<Doc<"btree">> {
-  const originalTree = await getTree(db, namespace);
+): Promise<Tree> {
+  const originalTree = await getTree(db, treeKey);
   if (originalTree) {
     return originalTree;
   }
@@ -1063,20 +1114,35 @@ export async function getOrCreateTree(
       sum: 0,
     },
   });
+  const defaultTreeKey = { aggregateName: treeKey.aggregateName };
   const effectiveMaxNodeSize =
     maxNodeSize ??
-    (await MAX_NODE_SIZE({ db }, undefined)) ??
+    (await MAX_NODE_SIZE({ db }, defaultTreeKey)) ??
     DEFAULT_MAX_NODE_SIZE;
   const effectiveRootLazy =
-    rootLazy ?? (await isRootLazy(db, undefined)) ?? true;
-  const id = await db.insert("btree", {
-    root,
-    maxNodeSize: effectiveMaxNodeSize,
-    namespace,
-  });
-  const newTree = await db.get("btree", id);
+    rootLazy ?? (await isRootLazy(db, defaultTreeKey)) ?? true;
+  const { aggregateName, namespace } = treeKey;
+  const newTree =
+    aggregateName === undefined
+      ? await db.get(
+          "btree",
+          await db.insert("btree", {
+            root,
+            maxNodeSize: effectiveMaxNodeSize,
+            namespace,
+          }),
+        )
+      : await db.get(
+          "namedBtree",
+          await db.insert("namedBtree", {
+            root,
+            maxNodeSize: effectiveMaxNodeSize,
+            namespace,
+            aggregateName,
+          }),
+        );
   // Check the maxNodeSize is valid.
-  await MIN_NODE_SIZE({ db }, namespace);
+  await MIN_NODE_SIZE({ db }, treeKey);
   if (effectiveRootLazy) {
     await db.patch("btreeNode", root, { aggregate: undefined });
   }
@@ -1085,9 +1151,9 @@ export async function getOrCreateTree(
 
 async function isRootLazy(
   db: DatabaseReader,
-  namespace: Namespace,
+  treeKey: TreeKey,
 ): Promise<boolean> {
-  const tree = await getTree(db, namespace);
+  const tree = await getTree(db, treeKey);
   if (!tree) {
     return true;
   }
@@ -1116,6 +1182,7 @@ export const paginate = query({
     k1: v.optional(v.any()),
     k2: v.optional(v.any()),
     namespace: v.optional(v.any()),
+    aggregateName: v.optional(v.string()),
     stale: v.optional(v.boolean()),
   },
   returns: v.object({
@@ -1138,9 +1205,10 @@ export async function paginateHandler(
     k1?: Key;
     k2?: Key;
     namespace?: Namespace;
+    aggregateName?: string;
   },
 ) {
-  const tree = await getTree(ctx.db, args.namespace);
+  const tree = await getTree(ctx.db, args);
   if (tree === null) {
     return { page: [], cursor: "", isDone: true };
   }
@@ -1235,6 +1303,7 @@ export const paginateNamespaces = query({
   args: {
     limit: v.number(),
     cursor: v.optional(v.string()),
+    aggregateName: v.optional(v.string()),
     stale: v.optional(v.boolean()),
   },
   returns: v.object({
@@ -1250,7 +1319,7 @@ export const paginateNamespaces = query({
 
 export async function paginateNamespacesHandler(
   ctx: { db: DatabaseReader },
-  args: { limit: number; cursor?: string },
+  args: { limit: number; cursor?: string; aggregateName?: string },
 ) {
   if (args.cursor === "endcursor") {
     return {
@@ -1259,21 +1328,51 @@ export async function paginateNamespacesHandler(
       isDone: true,
     };
   }
-  let trees = [];
-  if (args.cursor === undefined) {
-    trees = await ctx.db.query("btree").withIndex("by_id").take(args.limit);
-  } else {
-    trees = await ctx.db
+  const { aggregateName, cursor } = args;
+  if (aggregateName === undefined) {
+    const trees = await ctx.db
       .query("btree")
-      .withIndex("by_id", (q) => q.gt("_id", args.cursor as Id<"btree">))
+      .withIndex("by_id", (q) =>
+        cursor === undefined ? q : q.gt("_id", cursor as Id<"btree">),
+      )
       .take(args.limit);
+    const isDone = trees.length < args.limit;
+    return {
+      page: trees.map((t) => t.namespace ?? null),
+      cursor: isDone ? "endcursor" : trees[trees.length - 1]._id,
+      isDone,
+    };
   }
+  const trees = await ctx.db
+    .query("namedBtree")
+    .withIndex("by_aggregateName_namespace", (q) => {
+      const byName = q.eq("aggregateName", aggregateName);
+      return cursor === undefined
+        ? byName
+        : byName.gt("namespace", decodeNamespaceCursor(cursor));
+    })
+    .take(args.limit);
   const isDone = trees.length < args.limit;
   return {
     page: trees.map((t) => t.namespace ?? null),
-    cursor: isDone ? "endcursor" : trees[trees.length - 1]._id,
+    cursor: isDone
+      ? "endcursor"
+      : encodeNamespaceCursor(trees[trees.length - 1].namespace),
     isDone,
   };
+}
+
+// Named trees are paginated by namespace, which may be undefined, so the
+// cursor wraps it in an array.
+function encodeNamespaceCursor(namespace: Namespace): string {
+  return JSON.stringify(
+    namespace === undefined ? [] : [convexToJson(namespace)],
+  );
+}
+
+function decodeNamespaceCursor(cursor: string): Namespace {
+  const parsed = JSON.parse(cursor);
+  return parsed.length === 0 ? undefined : jsonToConvex(parsed[0]);
 }
 
 export const aggregateBetweenBatch = query({
@@ -1283,6 +1382,7 @@ export const aggregateBetweenBatch = query({
         k1: v.optional(v.any()),
         k2: v.optional(v.any()),
         namespace: v.optional(v.any()),
+        aggregateName: v.optional(v.string()),
       }),
     ),
     stale: v.optional(v.boolean()),
@@ -1296,7 +1396,14 @@ export const aggregateBetweenBatch = query({
 
 export async function aggregateBetweenBatchHandler(
   ctx: { db: DatabaseReader },
-  args: { queries: Array<{ k1?: Key; k2?: Key; namespace?: Namespace }> },
+  args: {
+    queries: Array<{
+      k1?: Key;
+      k2?: Key;
+      namespace?: Namespace;
+      aggregateName?: string;
+    }>;
+  },
 ) {
   return await Promise.all(
     args.queries.map((query) => aggregateBetweenHandler(ctx, query)),
@@ -1311,6 +1418,7 @@ export const atOffsetBatch = query({
         k1: v.optional(v.any()),
         k2: v.optional(v.any()),
         namespace: v.optional(v.any()),
+        aggregateName: v.optional(v.string()),
       }),
     ),
     stale: v.optional(v.boolean()),
@@ -1331,6 +1439,7 @@ export async function atOffsetBatchHandler(
       k1?: Key;
       k2?: Key;
       namespace?: Namespace;
+      aggregateName?: string;
     }>;
   },
 ) {

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Support multiple independent aggregates in one component instance: pass
+  `aggregateName` when constructing a `TableAggregate` or `DirectAggregate`.
+
 ## 0.3.2
 
 - Updates the /test entrypoint for compatibility with convex-test's new

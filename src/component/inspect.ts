@@ -1,13 +1,16 @@
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel.js";
 import { type DatabaseReader, query } from "./_generated/server.js";
-import { getTree, type Namespace, p } from "./btree.js";
+import { getTree, p, type TreeKey } from "./btree.js";
 import schema from "./schema.js";
 
 export const display = query({
-  args: { namespace: v.optional(v.any()) },
+  args: {
+    namespace: v.optional(v.any()),
+    aggregateName: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
-    const tree = await getTree(ctx.db, args.namespace);
+    const tree = await getTree(ctx.db, args);
     if (!tree) {
       return "empty";
     }
@@ -33,15 +36,18 @@ async function displayNode(
 }
 
 export const dump = query({
-  args: { namespace: v.optional(v.any()) },
+  args: {
+    namespace: v.optional(v.any()),
+    aggregateName: v.optional(v.string()),
+  },
   returns: v.string(),
   handler: async (ctx, args) => {
-    return await dumpTree(ctx.db, args.namespace);
+    return await dumpTree(ctx.db, args);
   },
 });
 
-export async function dumpTree(db: DatabaseReader, namespace: Namespace) {
-  const t = (await getTree(db, namespace))!;
+export async function dumpTree(db: DatabaseReader, treeKey: TreeKey) {
+  const t = (await getTree(db, treeKey))!;
   return dumpNode(db, t.root);
 }
 
@@ -71,10 +77,14 @@ async function dumpNode(
 }
 
 export const inspectNode = query({
-  args: { node: v.optional(v.string()), namespace: v.optional(v.any()) },
+  args: {
+    node: v.optional(v.string()),
+    namespace: v.optional(v.any()),
+    aggregateName: v.optional(v.string()),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const tree = await getTree(ctx.db, args.namespace);
+    const tree = await getTree(ctx.db, args);
     if (!tree) {
       console.log("no tree");
       return;
@@ -101,20 +111,39 @@ export const inspectNode = query({
   },
 });
 
+/**
+ * Lists the unnamed aggregate's trees, or the trees of the aggregate with the
+ * given name.
+ */
 export const listTrees = query({
   args: {
     take: v.optional(v.number()),
+    aggregateName: v.optional(v.string()),
   },
   returns: v.array(
-    v.object({
-      ...schema.tables.btree.validator.fields,
-      _id: v.id("btree"),
-      _creationTime: v.number(),
-    }),
+    v.union(
+      v.object({
+        ...schema.tables.btree.validator.fields,
+        _id: v.id("btree"),
+        _creationTime: v.number(),
+      }),
+      v.object({
+        ...schema.tables.namedBtree.validator.fields,
+        _id: v.id("namedBtree"),
+        _creationTime: v.number(),
+      }),
+    ),
   ),
-  handler: async (ctx, args) => {
-    const values = await ctx.db.query("btree").take(args.take ?? 100);
-    return values;
+  handler: async (ctx, { take, aggregateName }) => {
+    if (aggregateName === undefined) {
+      return await ctx.db.query("btree").take(take ?? 100);
+    }
+    return await ctx.db
+      .query("namedBtree")
+      .withIndex("by_aggregateName_namespace", (q) =>
+        q.eq("aggregateName", aggregateName),
+      )
+      .take(take ?? 100);
   },
 });
 

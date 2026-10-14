@@ -206,6 +206,32 @@ app.use(aggregate, { name: "aggregateByGame" });
 You then use the named aggregate when initializing the `TableAggregate` as we'll
 see below, using `components.aggregateScores` instead of `components.aggregate`.
 
+Alternatively, several aggregates can share one component instance by giving
+each an `aggregateName` when constructing it. Aggregates with different names
+are fully independent, including their namespaces, `clearAll`, and
+`iterNamespaces`.
+
+```ts
+const aggregateScores = new TableAggregate<...>(components.aggregate, {
+  aggregateName: "scores",
+  sortKey: (doc) => doc.score,
+});
+const aggregateByGame = new TableAggregate<...>(components.aggregate, {
+  aggregateName: "byGame",
+  sortKey: (doc) => doc.gameId,
+});
+const direct = new DirectAggregate<...>(components.aggregate, {
+  aggregateName: "direct",
+});
+```
+
+Aggregates sharing a component also share its queue of
+[queued writes](#queued-writes). While writes are queued for any of them,
+synchronous writes and non-stale reads of _all_ of them will throw. So either
+all or none of the aggregates in a component should use `{ async: true }` writes
+and `{ stale: true }` reads. If you need both modes, put the queued aggregates
+and the synchronous ones in separate component instances.
+
 ## Usage
 
 ### Write to the aggregate data structure
@@ -755,7 +781,9 @@ reads are still reactive to changes to the aggregate as the Batch Worker
 processes the queued writes.
 
 Note that you cannot mix the queued mode with the non-queued mode. If there are
-any writes queued, a non-stale read or non-async write will throw an error.
+any writes queued, a non-stale read or non-async write will throw an error. This
+applies across all aggregates sharing a component instance, including
+[named aggregates](#defining-multiple-aggregates).
 
 #### Dead-lettered writes
 
