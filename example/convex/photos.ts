@@ -28,7 +28,8 @@ export const photos = new TableAggregate<{
   Key: number;
   DataModel: DataModel;
   TableName: "photos";
-}>(components.photos, {
+}>(components.aggregate, {
+  aggregateName: "photos",
   namespace: (doc) => doc.album,
   sortKey: (doc) => doc._creationTime,
 });

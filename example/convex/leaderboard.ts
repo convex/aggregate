@@ -24,7 +24,8 @@ const aggregateByScore = new TableAggregate<{
   Key: number;
   DataModel: DataModel;
   TableName: "leaderboard";
-}>(components.aggregateByScore, {
+}>(components.aggregate, {
+  aggregateName: "byScore",
   sortKey: (leaderboardTableDoc) => -leaderboardTableDoc.score,
 });
 
@@ -32,7 +33,8 @@ const aggregateScoreByUser = new TableAggregate<{
   Key: [string, number];
   DataModel: DataModel;
   TableName: "leaderboard";
-}>(components.aggregateScoreByUser, {
+}>(components.aggregate, {
+  aggregateName: "scoreByUser",
   // We sort by name first, then by score, so that we can get the highest score for each user
   // we could alternatively use a namespace for this
   sortKey: (leaderboardTableDoc) => [
@@ -257,7 +259,7 @@ export const backfillAggregatesMigration = migrations.define({
 
 // This is what you can run, from the Convex dashboard or with `npx convex run`,
 // to backfill aggregates for existing leaderboard entries, if you created the
-// leaderboard before adding the aggregate components.
+// leaderboard before adding the aggregates.
 export const runAggregateBackfill = migrations.runner(
   internal.leaderboard.backfillAggregatesMigration,
 );

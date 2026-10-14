@@ -10,10 +10,12 @@ import { v } from "convex/values";
 import { resetStatusValidator } from "./utils/resetStatus";
 import { FunctionReturnType } from "convex/server";
 
+const BTREE_AGGREGATE_NAME = "btree";
+
 const btreeAggregate = new DirectAggregate<{
   Key: number;
   Id: string;
-}>(components.btreeAggregate);
+}>(components.aggregate, { aggregateName: BTREE_AGGREGATE_NAME });
 
 export const addScore = mutation({
   args: {
@@ -49,8 +51,9 @@ export const deleteItem = mutation({
 export const listTrees = query({
   args: {},
   handler: async (ctx) => {
-    return await ctx.runQuery(components.btreeAggregate.inspect.listTrees, {
+    return await ctx.runQuery(components.aggregate.inspect.listTrees, {
       take: 100,
+      aggregateName: BTREE_AGGREGATE_NAME,
     });
   },
 });
@@ -58,8 +61,9 @@ export const listTrees = query({
 export const listNodes = query({
   args: {},
   handler: async (ctx) => {
-    return await ctx.runQuery(components.btreeAggregate.inspect.listTreeNodes, {
+    return await ctx.runQuery(components.aggregate.inspect.listTreeNodes, {
       take: 100,
+      aggregateName: BTREE_AGGREGATE_NAME,
     });
   },
 });

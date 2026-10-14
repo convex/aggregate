@@ -12,14 +12,15 @@ const modules = import.meta.glob("./**/*.ts");
 describe("leaderboard", () => {
   async function setupTest() {
     const t = convexTest(schema, modules);
-    register(t, "aggregateByScore");
-    register(t, "aggregateScoreByUser");
+    register(t);
     migrations.register(t);
     // Reduce maxNodeSize so we can test complex trees with fewer items.
-    await t.mutation(components.aggregateByScore.public.clear, {
+    await t.mutation(components.aggregate.public.clear, {
+      aggregateName: "byScore",
       maxNodeSize: 4,
     });
-    await t.mutation(components.aggregateScoreByUser.public.clear, {
+    await t.mutation(components.aggregate.public.clear, {
+      aggregateName: "scoreByUser",
       maxNodeSize: 4,
     });
     return t;
@@ -146,8 +147,8 @@ describe("leaderboard", () => {
 describe("photos", () => {
   async function setupTest() {
     const t = convexTest(schema, modules);
-    register(t, "photos");
-    // Remove the non-existent init call - photos component doesn't need initialization
+    register(t);
+    // Remove the non-existent init call - the photos aggregate doesn't need initialization
     return t;
   }
 
@@ -190,7 +191,7 @@ describe("photos", () => {
 describe("shuffle", () => {
   async function setupTest() {
     const t = convexTest(schema, modules);
-    register(t, "music");
+    register(t);
     return t;
   }
 
@@ -198,7 +199,10 @@ describe("shuffle", () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     t = await setupTest();
-    await t.mutation(components.music.public.clear, { maxNodeSize: 4 });
+    await t.mutation(components.aggregate.public.clear, {
+      aggregateName: "music",
+      maxNodeSize: 4,
+    });
   });
   afterEach(async () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -256,8 +260,11 @@ describe("shuffle", () => {
 describe("stats", () => {
   async function setupTest() {
     const t = convexTest(schema, modules);
-    register(t, "stats");
-    await t.mutation(components.stats.public.clear, { maxNodeSize: 4 });
+    register(t);
+    await t.mutation(components.aggregate.public.clear, {
+      aggregateName: "stats",
+      maxNodeSize: 4,
+    });
     return t;
   }
   let t: Awaited<ReturnType<typeof setupTest>>;
