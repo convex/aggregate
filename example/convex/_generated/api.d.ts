@@ -59,11 +59,6 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  aggregateByScore: import("@convex-dev/aggregate/_generated/component.js").ComponentApi<"aggregateByScore">;
-  aggregateScoreByUser: import("@convex-dev/aggregate/_generated/component.js").ComponentApi<"aggregateScoreByUser">;
-  music: import("@convex-dev/aggregate/_generated/component.js").ComponentApi<"music">;
-  photos: import("@convex-dev/aggregate/_generated/component.js").ComponentApi<"photos">;
-  stats: import("@convex-dev/aggregate/_generated/component.js").ComponentApi<"stats">;
-  btreeAggregate: import("@convex-dev/aggregate/_generated/component.js").ComponentApi<"btreeAggregate">;
+  aggregate: import("@convex-dev/aggregate/_generated/component.js").ComponentApi<"aggregate">;
   migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
 };

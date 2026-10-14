@@ -11,7 +11,7 @@ import { components } from "./_generated/api";
 const stats = new DirectAggregate<{
   Key: number;
   Id: string;
-}>(components.stats);
+}>(components.aggregate, { name: "stats" });
 
 export const reportLatency = mutation({
   args: {
