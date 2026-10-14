@@ -20,7 +20,8 @@ const randomize = new TableAggregate<{
   DataModel: DataModel;
   TableName: "music";
   Key: null;
-}>(components.music, {
+}>(components.aggregate, {
+  name: "music",
   sortKey: () => null,
 });
 
