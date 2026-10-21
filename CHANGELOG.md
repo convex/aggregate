@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add experimental configuration options for configuring the Aggregate's batch
+  worker: `WORKER_IDLE_COOLDOWN_MS`, `WORKER_POLL_INTERVAL_MS`, and
+  `WORKER_SCHEDULE_PING`.
+
 ## 0.3.3
 
 - Bump `convex-helpers` to 0.1.128, which isn’t affected by
