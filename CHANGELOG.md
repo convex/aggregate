@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.4
 
 - Add experimental configuration options for configuring the Aggregate's batch
   worker: `WORKER_IDLE_COOLDOWN_MS`, `WORKER_POLL_INTERVAL_MS`, and
