@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Support multiple independent aggregates in one component instance: pass
+  `namespacePrefix` when constructing a `TableAggregate` or `DirectAggregate`.
+
 ## 0.3.3
 
 - Bump `convex-helpers` to 0.1.128, which isn’t affected by

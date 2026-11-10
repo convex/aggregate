@@ -129,7 +129,8 @@ const leaderboardByGame = new TableAggregate<{
   Key: number;
   DataModel: DataModel;
   TableName: "scores";
-}>(components.leaderboardByGame, {
+}>(components.aggregate, {
+  namespacePrefix: "leaderboardByGame",
   namespace: (doc) => doc.gameId,
   sortKey: (doc) => doc.score,
 });
@@ -190,22 +191,6 @@ app.use(aggregate);
 export default app;
 ```
 
-### Defining multiple aggregates
-
-You can aggregate multiple tables, multiple sort keys, or multiple values, but
-you need to make an instance of the aggregate component for each.
-
-You do this by using the `aggregate` component multiple times, giving each usage
-its own name.
-
-```ts
-app.use(aggregate, { name: "aggregateScores" });
-app.use(aggregate, { name: "aggregateByGame" });
-```
-
-You then use the named aggregate when initializing the `TableAggregate` as we'll
-see below, using `components.aggregateScores` instead of `components.aggregate`.
-
 ## Usage
 
 ### Write to the aggregate data structure
@@ -228,6 +213,7 @@ const aggregate = new TableAggregate<{
   DataModel: DataModel;
   TableName: "mytable";
 }>(components.aggregate, {
+  namespacePrefix: "mytableByCreationTime",
   sortKey: (doc) => doc._creationTime, // Allows querying across time ranges.
   sumValue: (doc) => doc.value, // The value to be used in `.sum` calculations.
 });
@@ -243,7 +229,8 @@ const aggregateByGame = new TableAggregate<{
   Key: [string, number];
   DataModel: DataModel;
   TableName: "leaderboard";
-}>(components.aggregateByGame, {
+}>(components.aggregate, {
+  namespacePrefix: "byGame",
   namespace: (doc) => doc.gameId,
   sortKey: (doc) => [doc.username, doc.score],
 });
@@ -321,7 +308,10 @@ const randomize = new TableAggregate<{
   Key: null;
   DataModel: DataModel;
   TableName: "mytable";
-}>(components.aggregate, { sortKey: (doc) => null });
+}>(components.aggregate, {
+  namespacePrefix: "randomize",
+  sortKey: (doc) => null,
+});
 ```
 
 Without sorting, all documents are ordered by their `_id` which is generally
@@ -353,16 +343,14 @@ defineSchema({
 And an aggregate defined with key as `_creationTime` and namespace as `album`.
 
 ```ts
-// convex/convex.config.ts
-app.use(aggregate, { name: "photos" });
-
 // convex/photos.ts
 const photos = new TableAggregate<{
   Namespace: string; // album name
   Key: number; // creation time
   DataModel: DataModel;
   TableName: "photos";
-}>(components.photos, {
+}>(components.aggregate, {
+  namespacePrefix: "photos",
   namespace: (doc) => doc.album,
   sortKey: (doc) => doc._creationTime,
 });
@@ -404,6 +392,7 @@ import { DirectAggregate } from "@convex-dev/aggregate";
 // have the same key.
 const aggregate = new DirectAggregate<{ Key: number; Id: string }>(
   components.aggregate,
+  { namespacePrefix: "stats" },
 );
 
 // within a mutation, add values to be aggregated
@@ -417,6 +406,40 @@ await aggregate.replace(ctx, { key: oldKey, id }, { key: newKey });
 ```
 
 See [`example/convex/stats.ts`](example/convex/stats.ts) for an example.
+
+### Defining multiple aggregates
+
+You can aggregate multiple tables, multiple sort keys, or multiple values by
+defining multiple aggregates in one component, each with its own
+`namespacePrefix`. This works for both `TableAggregate` and `DirectAggregate`.
+
+```ts
+const aggregateScores = new TableAggregate<...>(components.aggregate, {
+  namespacePrefix: "scores",
+  sortKey: (doc) => doc.score,
+});
+const aggregateByGame = new TableAggregate<...>(components.aggregate, {
+  namespacePrefix: "byGame",
+  namespace: (doc) => doc.gameId,
+  sortKey: (doc) => doc.score,
+});
+const latencies = new DirectAggregate<{ Key: number; Id: string }>(
+  components.aggregate,
+  { namespacePrefix: "latencies" },
+);
+```
+
+The aggregate stores each namespace `ns` as `[namespacePrefix, ns]`, and data
+without a namespace as `[namespacePrefix]`, so each aggregate gets its own
+internal data structures. You keep passing the namespace without the prefix,
+e.g. `aggregateByGame.count(ctx, { namespace: gameId })`, and `iterNamespaces`
+and `clearAll` only cover the aggregate's own namespaces.
+
+The `namespacePrefix` determines where an aggregate's data is stored, so
+changing it points the aggregate at a new, empty one. Aggregates defined without
+a `namespacePrefix` store their data under the namespaces you give them
+directly, and their `iterNamespaces` and `clearAll` cover every namespace in the
+component, including those of prefixed aggregates.
 
 ## Operations
 
@@ -496,9 +519,9 @@ data without writing to the aggregate, they can get out of sync and the returned
 aggregates may be incorrect.
 
 The simplest way to fix is to start over. Either call
-`await aggregate.clear(ctx)` or rename the component like
-`app.use(aggregate, { name: "newName" })` which will reset it to be empty. Then
-follow the instructions from [above](#attach-aggregate-to-an-existing-table).
+`await aggregate.clearAll(ctx)` or change its `namespacePrefix` to a new prefix,
+which starts out empty. Then follow the instructions from
+[above](#attach-aggregate-to-an-existing-table).
 
 There is an alternative which doesn't clear the aggregates: compare the source
 of truth to the aggregate table. You can use `db.query("mytable").paginate()` on
@@ -755,7 +778,24 @@ reads are still reactive to changes to the aggregate as the Batch Worker
 processes the queued writes.
 
 Note that you cannot mix the queued mode with the non-queued mode. If there are
-any writes queued, a non-stale read or non-async write will throw an error.
+any writes queued, a non-stale read or non-async write will throw an error. This
+applies across all aggregates in the component, so either all or none of the
+aggregates in a component should use `{ async: true }` writes and
+`{ stale: true }` reads. If you need both modes, install the component a second
+time under its own name, and use that instance for the queued aggregates:
+
+```ts
+// convex/convex.config.ts
+app.use(aggregate);
+app.use(aggregate, { name: "queuedAggregate" });
+```
+
+```ts
+const clicks = new TableAggregate<...>(components.queuedAggregate, {
+  namespacePrefix: "clicks",
+  sortKey: (doc) => doc._creationTime,
+});
+```
 
 #### Dead-lettered writes
 

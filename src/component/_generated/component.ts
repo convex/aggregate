@@ -125,7 +125,12 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       paginateNamespaces: FunctionReference<
         "query",
         "internal",
-        { cursor?: string; limit: number; stale?: boolean },
+        {
+          cursor?: string;
+          limit: number;
+          namespacePrefix?: string;
+          stale?: boolean;
+        },
         { cursor: string; isDone: boolean; page: Array<any> },
         Name
       >;

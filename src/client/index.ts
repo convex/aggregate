@@ -110,7 +110,102 @@ export class Aggregate<
   ID extends string,
   Namespace extends ConvexValue | undefined = undefined,
 > {
-  constructor(protected component: ComponentApi) {}
+  protected readonly namespacePrefix: string | undefined;
+
+  /**
+   * @param options.namespacePrefix - Stores this aggregate's data under
+   *   namespaces that start with this prefix, so multiple aggregates can share
+   *   one component. A namespace `ns` is stored as `[prefix, ns]`, and the
+   *   `undefined` namespace is stored as `[prefix]`.
+   */
+  constructor(
+    protected component: ComponentApi,
+    options?: { namespacePrefix?: string },
+  ) {
+    this.namespacePrefix = options?.namespacePrefix;
+  }
+
+  private _prefixNamespace(namespace: unknown): ConvexValue | undefined {
+    const ns = namespace as ConvexValue | undefined;
+    if (this.namespacePrefix === undefined) {
+      return ns;
+    }
+    return ns === undefined
+      ? [this.namespacePrefix]
+      : [this.namespacePrefix, ns];
+  }
+
+  protected _toQueuedOperation(
+    operation: AggregateOperation<K, ID, Namespace>,
+  ): QueuedOperation {
+    switch (operation.type) {
+      case "insert":
+        return {
+          type: "insert",
+          key: keyToPosition(operation.key, operation.id),
+          value: operation.id,
+          summand: operation.sumValue,
+          namespace: this._prefixNamespace(
+            namespaceFromArg<Namespace>(operation),
+          ),
+        };
+      case "delete":
+        return {
+          type: "delete",
+          key: keyToPosition(operation.key, operation.id),
+          namespace: this._prefixNamespace(
+            namespaceFromArg<Namespace>(operation),
+          ),
+        };
+      case "deleteIfExists":
+        return {
+          type: "deleteIfExists",
+          key: keyToPosition(operation.key, operation.id),
+          namespace: this._prefixNamespace(
+            namespaceFromArg<Namespace>(operation),
+          ),
+        };
+      case "insertIfDoesNotExist": {
+        const position = keyToPosition(operation.key, operation.id);
+        const namespace = this._prefixNamespace(
+          namespaceFromArg<Namespace>(operation),
+        );
+        // insertIfDoesNotExist is implemented as a replaceOrInsert operation with
+        // the current item and the new item set to the same thing.
+        return {
+          type: "replaceOrInsert",
+          currentKey: position,
+          newKey: position,
+          value: operation.id,
+          summand: operation.sumValue,
+          namespace,
+          newNamespace: namespace,
+        };
+      }
+      case "replace":
+      case "replaceOrInsert": {
+        const { currentItem, newItem } = operation;
+        return {
+          type: operation.type,
+          currentKey: keyToPosition(currentItem.key, currentItem.id),
+          newKey: keyToPosition(newItem.key, currentItem.id),
+          value: currentItem.id,
+          summand: newItem.sumValue,
+          namespace: this._prefixNamespace(
+            namespaceFromArg<Namespace>(currentItem),
+          ),
+          newNamespace: this._prefixNamespace(
+            namespaceFromArg<Namespace>(newItem),
+          ),
+        };
+      }
+      default:
+        operation satisfies never;
+        throw new Error(
+          `Unknown operation type: ${(operation as { type: string }).type}`,
+        );
+    }
+  }
 
   private async _enqueue(
     ctx: MutationCtx | ActionCtx,
@@ -146,7 +241,7 @@ export class Aggregate<
       this.component.btree.aggregateBetween,
       {
         ...boundsToPositions(opts[0]?.bounds),
-        namespace: namespaceFromOpts(opts),
+        namespace: this._prefixNamespace(namespaceFromOpts(opts)),
         stale: opts[0]?.stale,
       },
       opts[0]?.stale,
@@ -166,7 +261,7 @@ export class Aggregate<
       if (!query) {
         throw new Error("You must pass bounds and/or namespace");
       }
-      const namespace = namespaceFromArg(query);
+      const namespace = this._prefixNamespace(namespaceFromArg(query));
       const { k1, k2 } = boundsToPositions(query.bounds);
       return { k1, k2, namespace };
     });
@@ -197,7 +292,7 @@ export class Aggregate<
       this.component.btree.aggregateBetween,
       {
         ...boundsToPositions(opts[0]?.bounds),
-        namespace: namespaceFromOpts(opts),
+        namespace: this._prefixNamespace(namespaceFromOpts(opts)),
         stale: opts[0]?.stale,
       },
       opts[0]?.stale,
@@ -217,7 +312,7 @@ export class Aggregate<
       if (!query) {
         throw new Error("You must pass bounds and/or namespace");
       }
-      const namespace = namespaceFromArg(query);
+      const namespace = this._prefixNamespace(namespaceFromArg(query));
       const { k1, k2 } = boundsToPositions(query.bounds);
       return { k1, k2, namespace };
     });
@@ -255,7 +350,7 @@ export class Aggregate<
         this.component.btree.atNegativeOffset,
         {
           offset: -offset - 1,
-          namespace: namespaceFromOpts(opts),
+          namespace: this._prefixNamespace(namespaceFromOpts(opts)),
           ...boundsToPositions(opts[0]?.bounds),
           stale: opts[0]?.stale,
         },
@@ -268,7 +363,7 @@ export class Aggregate<
       this.component.btree.atOffset,
       {
         offset,
-        namespace: namespaceFromOpts(opts),
+        namespace: this._prefixNamespace(namespaceFromOpts(opts)),
         ...boundsToPositions(opts[0]?.bounds),
         stale: opts[0]?.stale,
       },
@@ -290,7 +385,7 @@ export class Aggregate<
     const queryArgs = queries.map((q) => ({
       offset: q.offset,
       ...boundsToPositions(q.bounds),
-      namespace: namespaceFromArg(q),
+      namespace: this._prefixNamespace(namespaceFromArg(q)),
     }));
 
     const results = await runQuery(
@@ -337,7 +432,7 @@ export class Aggregate<
             inclusive: true,
           }),
           k2,
-          namespace: namespaceFromOpts(opts),
+          namespace: this._prefixNamespace(namespaceFromOpts(opts)),
           stale: opts[0]?.stale,
         },
         opts[0]?.stale,
@@ -353,7 +448,7 @@ export class Aggregate<
           inclusive: true,
         }),
         k1,
-        namespace: namespaceFromOpts(opts),
+        namespace: this._prefixNamespace(namespaceFromOpts(opts)),
         stale: opts[0]?.stale,
       },
       opts[0]?.stale,
@@ -480,7 +575,7 @@ export class Aggregate<
       ctx,
       this.component.btree.paginate,
       {
-        namespace: namespaceFromOpts(opts),
+        namespace: this._prefixNamespace(namespaceFromOpts(opts)),
         ...boundsToPositions(opts[0]?.bounds),
         cursor: opts[0]?.cursor,
         order,
@@ -559,7 +654,7 @@ export class Aggregate<
         key: position,
         value: id,
         summand,
-        namespace,
+        namespace: this._prefixNamespace(namespace),
       });
       return;
     }
@@ -567,7 +662,7 @@ export class Aggregate<
       key: position,
       summand,
       value: id,
-      namespace,
+      namespace: this._prefixNamespace(namespace),
     });
   }
   async _delete(
@@ -579,12 +674,16 @@ export class Aggregate<
   ): Promise<void> {
     const position = keyToPosition(key, id);
     if (opts?.async) {
-      await this._enqueue(ctx, { type: "delete", key: position, namespace });
+      await this._enqueue(ctx, {
+        type: "delete",
+        key: position,
+        namespace: this._prefixNamespace(namespace),
+      });
       return;
     }
     await ctx.runMutation(this.component.public.delete_, {
       key: position,
-      namespace,
+      namespace: this._prefixNamespace(namespace),
     });
   }
   async _replace(
@@ -606,8 +705,8 @@ export class Aggregate<
         newKey: newPosition,
         value: id,
         summand,
-        namespace: currentNamespace,
-        newNamespace,
+        namespace: this._prefixNamespace(currentNamespace),
+        newNamespace: this._prefixNamespace(newNamespace),
       });
       return;
     }
@@ -616,8 +715,8 @@ export class Aggregate<
       newKey: newPosition,
       summand,
       value: id,
-      namespace: currentNamespace,
-      newNamespace,
+      namespace: this._prefixNamespace(currentNamespace),
+      newNamespace: this._prefixNamespace(newNamespace),
     });
   }
   async _insertIfDoesNotExist(
@@ -651,13 +750,13 @@ export class Aggregate<
       await this._enqueue(ctx, {
         type: "deleteIfExists",
         key: position,
-        namespace,
+        namespace: this._prefixNamespace(namespace),
       });
       return;
     }
     await ctx.runMutation(this.component.public.deleteIfExists, {
       key: position,
-      namespace,
+      namespace: this._prefixNamespace(namespace),
     });
   }
   async _replaceOrInsert(
@@ -679,8 +778,8 @@ export class Aggregate<
         newKey: newPosition,
         value: id,
         summand,
-        namespace: currentNamespace,
-        newNamespace,
+        namespace: this._prefixNamespace(currentNamespace),
+        newNamespace: this._prefixNamespace(newNamespace),
       });
       return;
     }
@@ -689,8 +788,8 @@ export class Aggregate<
       newKey: newPosition,
       summand,
       value: id,
-      namespace: currentNamespace,
-      newNamespace,
+      namespace: this._prefixNamespace(currentNamespace),
+      newNamespace: this._prefixNamespace(newNamespace),
     });
   }
 
@@ -718,7 +817,7 @@ export class Aggregate<
     await ctx.runMutation(this.component.public.clear, {
       maxNodeSize: opts[0]?.maxNodeSize,
       rootLazy: opts[0]?.rootLazy,
-      namespace: namespaceFromOpts(opts),
+      namespace: this._prefixNamespace(namespaceFromOpts(opts)),
     });
   }
   /**
@@ -736,7 +835,9 @@ export class Aggregate<
     ctx: MutationCtx | ActionCtx,
     namespace: Namespace,
   ): Promise<void> {
-    await ctx.runMutation(this.component.public.makeRootLazy, { namespace });
+    await ctx.runMutation(this.component.public.makeRootLazy, {
+      namespace: this._prefixNamespace(namespace),
+    });
   }
 
   async paginateNamespaces(
@@ -755,12 +856,16 @@ export class Aggregate<
       {
         cursor,
         limit: pageSize,
+        namespacePrefix: this.namespacePrefix,
         stale,
       },
       stale,
     );
     return {
-      page: page as Namespace[],
+      page:
+        this.namespacePrefix === undefined
+          ? (page as Namespace[])
+          : page.map((ns: ConvexValue[]) => ns[1] as Namespace),
       cursor: newCursor,
       isDone,
     };
@@ -851,7 +956,7 @@ export class DirectAggregate<
   ): Promise<void> {
     await this._enqueueBatch(
       ctx,
-      operations.map(aggregateOperationToQueuedOperation),
+      operations.map((operation) => this._toQueuedOperation(operation)),
     );
   }
 
@@ -1050,6 +1155,11 @@ export class TableAggregate<T extends AnyTableAggregateType> extends Aggregate<
     private options: {
       sortKey: (d: TableAggregateDocument<T>) => T["Key"];
       sumValue?: (d: TableAggregateDocument<T>) => number;
+      /**
+       * Stores this aggregate's data under namespaces that start with this
+       * prefix, so multiple aggregates can share one component.
+       */
+      namespacePrefix?: string;
     } & (undefined extends TableAggregateNamespace<T>
       ? {
           namespace?: (
@@ -1062,7 +1172,7 @@ export class TableAggregate<T extends AnyTableAggregateType> extends Aggregate<
           ) => TableAggregateNamespace<T>;
         }),
   ) {
-    super(component);
+    super(component, { namespacePrefix: options.namespacePrefix });
   }
 
   /**
@@ -1092,7 +1202,7 @@ export class TableAggregate<T extends AnyTableAggregateType> extends Aggregate<
       case "delete":
       case "deleteIfExists": {
         const { doc } = operation;
-        return aggregateOperationToQueuedOperation({
+        return this._toQueuedOperation({
           type: operation.type,
           key: this.options.sortKey(doc),
           id: doc._id as TableAggregateId<T>,
@@ -1105,7 +1215,7 @@ export class TableAggregate<T extends AnyTableAggregateType> extends Aggregate<
       case "replace":
       case "replaceOrInsert": {
         const { oldDoc, newDoc } = operation;
-        return aggregateOperationToQueuedOperation({
+        return this._toQueuedOperation({
           type: operation.type,
           currentItem: {
             key: this.options.sortKey(oldDoc),
@@ -1328,68 +1438,6 @@ export type NamespacedOpts<Opts, Namespace> =
 export type NamespacedOptsBatch<Opts, Namespace> = Array<
   undefined extends Namespace ? Opts : { namespace: Namespace } & Opts
 >;
-
-function aggregateOperationToQueuedOperation<
-  K extends Key,
-  ID extends string,
-  Namespace extends ConvexValue | undefined,
->(operation: AggregateOperation<K, ID, Namespace>): QueuedOperation {
-  switch (operation.type) {
-    case "insert":
-      return {
-        type: "insert",
-        key: keyToPosition(operation.key, operation.id),
-        value: operation.id,
-        summand: operation.sumValue,
-        namespace: namespaceFromArg<Namespace>(operation),
-      };
-    case "delete":
-      return {
-        type: "delete",
-        key: keyToPosition(operation.key, operation.id),
-        namespace: namespaceFromArg<Namespace>(operation),
-      };
-    case "deleteIfExists":
-      return {
-        type: "deleteIfExists",
-        key: keyToPosition(operation.key, operation.id),
-        namespace: namespaceFromArg<Namespace>(operation),
-      };
-    case "insertIfDoesNotExist": {
-      const position = keyToPosition(operation.key, operation.id);
-      const namespace = namespaceFromArg<Namespace>(operation);
-      // insertIfDoesNotExist is implemented as a replaceOrInsert operation with
-      // the current item and the new item set to the same thing.
-      return {
-        type: "replaceOrInsert",
-        currentKey: position,
-        newKey: position,
-        value: operation.id,
-        summand: operation.sumValue,
-        namespace,
-        newNamespace: namespace,
-      };
-    }
-    case "replace":
-    case "replaceOrInsert": {
-      const { currentItem, newItem } = operation;
-      return {
-        type: operation.type,
-        currentKey: keyToPosition(currentItem.key, currentItem.id),
-        newKey: keyToPosition(newItem.key, currentItem.id),
-        value: currentItem.id,
-        summand: newItem.sumValue,
-        namespace: namespaceFromArg<Namespace>(currentItem),
-        newNamespace: namespaceFromArg<Namespace>(newItem),
-      };
-    }
-    default:
-      operation satisfies never;
-      throw new Error(
-        `Unknown operation type: ${(operation as { type: string }).type}`,
-      );
-  }
-}
 
 function namespaceFromArg<Namespace>(
   args: { namespace: Namespace } | object,

@@ -1235,6 +1235,7 @@ export const paginateNamespaces = query({
   args: {
     limit: v.number(),
     cursor: v.optional(v.string()),
+    namespacePrefix: v.optional(v.string()),
     stale: v.optional(v.boolean()),
   },
   returns: v.object({
@@ -1250,7 +1251,7 @@ export const paginateNamespaces = query({
 
 export async function paginateNamespacesHandler(
   ctx: { db: DatabaseReader },
-  args: { limit: number; cursor?: string },
+  args: { limit: number; cursor?: string; namespacePrefix?: string },
 ) {
   if (args.cursor === "endcursor") {
     return {
@@ -1258,6 +1259,12 @@ export async function paginateNamespacesHandler(
       cursor: "endcursor",
       isDone: true,
     };
+  }
+  if (args.namespacePrefix !== undefined) {
+    return paginatePrefixedNamespaces(ctx, {
+      ...args,
+      namespacePrefix: args.namespacePrefix,
+    });
   }
   let trees = [];
   if (args.cursor === undefined) {
@@ -1272,6 +1279,35 @@ export async function paginateNamespacesHandler(
   return {
     page: trees.map((t) => t.namespace ?? null),
     cursor: isDone ? "endcursor" : trees[trees.length - 1]._id,
+    isDone,
+  };
+}
+
+// Namespaces with a prefix are arrays starting with the prefix, which sort
+// between [prefix] (inclusive) and [prefix + "\0"] (exclusive).
+async function paginatePrefixedNamespaces(
+  ctx: { db: DatabaseReader },
+  args: { limit: number; cursor?: string; namespacePrefix: string },
+) {
+  const upper = [args.namespacePrefix + "\0"];
+  const after =
+    args.cursor === undefined
+      ? undefined
+      : jsonToConvex(JSON.parse(args.cursor));
+  const trees = await ctx.db
+    .query("btree")
+    .withIndex("by_namespace", (q) =>
+      after === undefined
+        ? q.gte("namespace", [args.namespacePrefix]).lt("namespace", upper)
+        : q.gt("namespace", after).lt("namespace", upper),
+    )
+    .take(args.limit);
+  const isDone = trees.length < args.limit;
+  return {
+    page: trees.map((t) => t.namespace),
+    cursor: isDone
+      ? "endcursor"
+      : JSON.stringify(convexToJson(trees[trees.length - 1].namespace)),
     isDone,
   };
 }

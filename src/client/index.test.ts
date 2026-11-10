@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { TableAggregate } from "./index.js";
+import { DirectAggregate, TableAggregate } from "./index.js";
 import {
   components,
   componentSchema,
@@ -13,6 +13,7 @@ import {
 } from "convex/server";
 import { v } from "convex/values";
 import { convexTest } from "convex-test";
+import batchWorker from "@convex-dev/batch-worker/test";
 import type { DataModelFromSchemaDefinition } from "convex/server";
 
 const schema = defineSchema({
@@ -1234,5 +1235,204 @@ describe("stale reads", () => {
       return await aggregate.count(ctx);
     });
     expect(count).toBe(1);
+  });
+});
+
+describe("namespacePrefix", () => {
+  function createPrefixedAggregates() {
+    const unprefixed = new TableAggregate<{
+      Key: number;
+      DataModel: DataModel;
+      TableName: "testItems";
+    }>(components.aggregate, {
+      sortKey: (doc) => doc.value,
+    });
+    const byValue = new TableAggregate<{
+      Key: number;
+      DataModel: DataModel;
+      TableName: "testItems";
+    }>(components.aggregate, {
+      namespacePrefix: "byValue",
+      sortKey: (doc) => doc.value,
+      sumValue: (doc) => doc.value,
+    });
+    const byName = new TableAggregate<{
+      Key: string;
+      DataModel: DataModel;
+      TableName: "testItems";
+    }>(components.aggregate, {
+      namespacePrefix: "byName",
+      sortKey: (doc) => doc.name,
+    });
+    const byAlbum = new TableAggregate<{
+      Namespace: string;
+      Key: number;
+      DataModel: DataModel;
+      TableName: "photos";
+    }>(components.aggregate, {
+      namespacePrefix: "byAlbum",
+      namespace: (doc) => doc.album,
+      sortKey: (doc) => doc.score,
+    });
+    return { unprefixed, byValue, byName, byAlbum };
+  }
+
+  async function insertPhoto(
+    ctx: GenericMutationCtx<DataModel>,
+    album: string,
+    score: number,
+  ) {
+    const id = await ctx.db.insert("photos", { album, url: "u", score });
+    return (await ctx.db.get("photos", id))!;
+  }
+
+  test("prefixed aggregates are independent of each other", async () => {
+    const t = setupTest();
+    const { unprefixed, byValue, byName } = createPrefixedAggregates();
+
+    await t.run(async (ctx) => {
+      const a = await testItem(ctx, { name: "a", value: 1 });
+      const b = await testItem(ctx, { name: "b", value: 2 });
+      await byValue.insert(ctx, a);
+      await byValue.insert(ctx, b);
+      await byName.insert(ctx, a);
+      await unprefixed.insert(ctx, a);
+      await unprefixed.insert(ctx, b);
+      await unprefixed.insert(
+        ctx,
+        await testItem(ctx, { name: "c", value: 3 }),
+      );
+    });
+
+    await t.run(async (ctx) => {
+      expect(await byValue.count(ctx)).toBe(2);
+      expect(await byValue.sum(ctx)).toBe(3);
+      expect(await byName.count(ctx)).toBe(1);
+      expect((await byName.max(ctx))?.key).toBe("a");
+      expect(await unprefixed.count(ctx)).toBe(3);
+    });
+  });
+
+  test("namespaces are scoped to the prefix", async () => {
+    const t = setupTest();
+    const { byAlbum } = createPrefixedAggregates();
+    const otherAlbums = new TableAggregate<{
+      Namespace: string;
+      Key: number;
+      DataModel: DataModel;
+      TableName: "photos";
+    }>(components.aggregate, {
+      namespacePrefix: "byAlbum2",
+      namespace: (doc) => doc.album,
+      sortKey: (doc) => doc.score,
+    });
+
+    await t.run(async (ctx) => {
+      await byAlbum.insert(ctx, await insertPhoto(ctx, "x", 1));
+      await byAlbum.insert(ctx, await insertPhoto(ctx, "x", 2));
+      await byAlbum.insert(ctx, await insertPhoto(ctx, "y", 3));
+      await byAlbum.insert(ctx, await insertPhoto(ctx, "z", 4));
+      await otherAlbums.insert(ctx, await insertPhoto(ctx, "x", 5));
+    });
+
+    await t.run(async (ctx) => {
+      expect(await byAlbum.count(ctx, { namespace: "x" })).toBe(2);
+      expect(await otherAlbums.count(ctx, { namespace: "x" })).toBe(1);
+      const namespaces = [];
+      for await (const ns of byAlbum.iterNamespaces(ctx, 1)) {
+        namespaces.push(ns);
+      }
+      expect(namespaces).toEqual(["x", "y", "z"]);
+      const other = [];
+      for await (const ns of otherAlbums.iterNamespaces(ctx)) {
+        other.push(ns);
+      }
+      expect(other).toEqual(["x"]);
+    });
+  });
+
+  test("clearAll only clears the prefixed aggregate", async () => {
+    const t = setupTest();
+    const { unprefixed, byValue, byAlbum } = createPrefixedAggregates();
+
+    await t.run(async (ctx) => {
+      const a = await testItem(ctx, { name: "a", value: 1 });
+      await byValue.insert(ctx, a);
+      await unprefixed.insert(ctx, a);
+      await byAlbum.insert(ctx, await insertPhoto(ctx, "x", 1));
+    });
+
+    await t.run(async (ctx) => {
+      await byAlbum.clearAll(ctx);
+      expect(await byAlbum.count(ctx, { namespace: "x" })).toBe(0);
+      expect(await byValue.count(ctx)).toBe(1);
+      expect(await unprefixed.count(ctx)).toBe(1);
+    });
+  });
+
+  test("DirectAggregate supports a namespacePrefix", async () => {
+    const t = setupTest();
+    const direct = new DirectAggregate<{ Key: number; Id: string }>(
+      components.aggregate,
+      { namespacePrefix: "direct" },
+    );
+    const other = new DirectAggregate<{ Key: number; Id: string }>(
+      components.aggregate,
+    );
+
+    await t.run(async (ctx) => {
+      await direct.insert(ctx, { key: 1, id: "a", sumValue: 10 });
+      await direct.insert(ctx, { key: 2, id: "b", sumValue: 20 });
+      await direct.replace(ctx, { key: 2, id: "b" }, { key: 3, sumValue: 30 });
+      await other.insert(ctx, { key: 1, id: "a" });
+    });
+
+    await t.run(async (ctx) => {
+      expect(await direct.count(ctx)).toBe(2);
+      expect(await direct.sum(ctx)).toBe(40);
+      expect(
+        await direct.countBatch(ctx, [
+          {},
+          { bounds: { lower: { key: 2, inclusive: true } } },
+        ]),
+      ).toEqual([2, 1]);
+      expect(await other.count(ctx)).toBe(1);
+    });
+  });
+
+  test("queued writes use the prefix", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setupTest();
+      batchWorker.register(t, "aggregate/batchWorker");
+      const direct = new DirectAggregate<{ Key: number; Id: string }>(
+        components.aggregate,
+        { namespacePrefix: "direct" },
+      );
+      const other = new DirectAggregate<{ Key: number; Id: string }>(
+        components.aggregate,
+      );
+
+      await t.run(async (ctx) => {
+        await direct.insert(ctx, { key: 1, id: "a" }, { async: true });
+        await direct.enqueueBatch(ctx, [
+          { type: "insert", key: 2, id: "b" },
+          {
+            type: "replace",
+            currentItem: { key: 1, id: "a" },
+            newItem: { key: 4 },
+          },
+        ]);
+      });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      await t.run(async (ctx) => {
+        expect(await direct.count(ctx)).toBe(2);
+        expect((await direct.max(ctx))?.key).toBe(4);
+        expect(await other.count(ctx)).toBe(0);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
