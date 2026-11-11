@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.5
+
+### Patch Changes
+
+- ee0e099: Use Convex's built-in pagination for `deadLetter.list` (#279).
+  Existing saved cursors cannot be reused because the cursor format changes, and
+  callers must observe Convex's one-pagination-per-query limit when calling this
+  function from a query.
+
 ## 0.3.4
 
 - Add experimental configuration options for configuring the Aggregate's batch
