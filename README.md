@@ -125,21 +125,24 @@ Here's how you would create the aggregate we just described:
 
 ```ts
 const leaderboardByGame = new TableAggregate<{
-  Namespace: Id<"games">;
+  Namespace: ["leaderboardByGame", Id<"games">];
   Key: number;
   DataModel: DataModel;
   TableName: "scores";
-}>(components.leaderboardByGame, {
-  namespace: (doc) => doc.gameId,
+}>(components.aggregate, {
+  namespace: (doc) => ["leaderboardByGame", doc.gameId],
   sortKey: (doc) => doc.score,
 });
 ```
 
-And whenever you use this aggregate, you specify the namespace.
+And whenever you use this aggregate, you specify the namespace. The first
+element, `"leaderboardByGame"`, keeps this aggregate's data separate from other
+aggregates in the same component, as described
+[below](#defining-multiple-aggregates).
 
 ```ts
 const footballHighScore = await leaderboardByGame.max(ctx, {
-  namespace: footballId,
+  namespace: ["leaderboardByGame", footballId],
 });
 ```
 
@@ -190,22 +193,6 @@ app.use(aggregate);
 export default app;
 ```
 
-### Defining multiple aggregates
-
-You can aggregate multiple tables, multiple sort keys, or multiple values, but
-you need to make an instance of the aggregate component for each.
-
-You do this by using the `aggregate` component multiple times, giving each usage
-its own name.
-
-```ts
-app.use(aggregate, { name: "aggregateScores" });
-app.use(aggregate, { name: "aggregateByGame" });
-```
-
-You then use the named aggregate when initializing the `TableAggregate` as we'll
-see below, using `components.aggregateScores` instead of `components.aggregate`.
-
 ## Usage
 
 ### Write to the aggregate data structure
@@ -224,10 +211,12 @@ import { mutation as rawMutation } from "./_generated/server";
 import { TableAggregate } from "@convex-dev/aggregate";
 
 const aggregate = new TableAggregate<{
+  Namespace: "mytableByCreationTime";
   Key: number;
   DataModel: DataModel;
   TableName: "mytable";
 }>(components.aggregate, {
+  namespace: () => "mytableByCreationTime",
   sortKey: (doc) => doc._creationTime, // Allows querying across time ranges.
   sumValue: (doc) => doc.value, // The value to be used in `.sum` calculations.
 });
@@ -239,12 +228,12 @@ table:
 
 ```ts
 const aggregateByGame = new TableAggregate<{
-  Namespace: Id<"games">;
+  Namespace: ["byGame", Id<"games">];
   Key: [string, number];
   DataModel: DataModel;
   TableName: "leaderboard";
-}>(components.aggregateByGame, {
-  namespace: (doc) => doc.gameId,
+}>(components.aggregate, {
+  namespace: (doc) => ["byGame", doc.gameId],
   sortKey: (doc) => [doc.username, doc.score],
 });
 ```
@@ -291,7 +280,9 @@ call any of the methods on your instance to aggregate data.
 ```ts
 // convex/myfunctions.ts
 // then in your queries and mutations you can do
-const tableCount = await aggregateByGame.count(ctx);
+const gameCount = await aggregateByGame.count(ctx, {
+  namespace: ["byGame", gameId],
+});
 // or any of the other examples listed above.
 ```
 
@@ -314,14 +305,18 @@ Or play with them online at: https://aggregate-component-example.netlify.app/
 ### Total Count and Randomization
 
 If you don't need the ordering, partitioning, or summing behavior of
-`TableAggregate`, you can set `namespace: undefined` and `sortKey: null`.
+`TableAggregate`, you can use a single namespace and `sortKey: null`.
 
 ```ts
 const randomize = new TableAggregate<{
+  Namespace: "randomize";
   Key: null;
   DataModel: DataModel;
   TableName: "mytable";
-}>(components.aggregate, { sortKey: (doc) => null });
+}>(components.aggregate, {
+  namespace: () => "randomize",
+  sortKey: (doc) => null,
+});
 ```
 
 Without sorting, all documents are ordered by their `_id` which is generally
@@ -353,17 +348,14 @@ defineSchema({
 And an aggregate defined with key as `_creationTime` and namespace as `album`.
 
 ```ts
-// convex/convex.config.ts
-app.use(aggregate, { name: "photos" });
-
 // convex/photos.ts
 const photos = new TableAggregate<{
-  Namespace: string; // album name
+  Namespace: ["photos", string]; // album name
   Key: number; // creation time
   DataModel: DataModel;
   TableName: "photos";
-}>(components.photos, {
-  namespace: (doc) => doc.album,
+}>(components.aggregate, {
+  namespace: (doc) => ["photos", doc.album],
   sortKey: (doc) => doc._creationTime,
 });
 ```
@@ -379,7 +371,9 @@ documents. In this way we can paginate through the whole photo album.
 export const pageOfPhotos({
   args: { offset: v.number(), numItems: v.number(), album: v.string() },
   handler: async (ctx, { offset, numItems, album }) => {
-    const { key } = await photos.at(ctx, offset, { namespace: album });
+    const { key } = await photos.at(ctx, offset, {
+      namespace: ["photos", album],
+    });
     return await ctx.db.query("photos")
       .withIndex("by_album_creation_time", q=>q.eq("album", album).gte("_creationTime", key))
       .take(numItems);
@@ -402,21 +396,94 @@ import { DataModel } from "./_generated/dataModel";
 import { DirectAggregate } from "@convex-dev/aggregate";
 // Note the `id` should be unique to be a tie-breaker in case two data points
 // have the same key.
-const aggregate = new DirectAggregate<{ Key: number; Id: string }>(
-  components.aggregate,
-);
+const aggregate = new DirectAggregate<{
+  Namespace: "stats";
+  Key: number;
+  Id: string;
+}>(components.aggregate);
+const namespace = "stats";
 
 // within a mutation, add values to be aggregated
-await aggregate.insert(ctx, { key, id });
+await aggregate.insert(ctx, { namespace, key, id });
 // if you want to use `.sum` to aggregate sums of values, insert with a sumValue
-await aggregate.insert(ctx, { key, id, sumValue });
+await aggregate.insert(ctx, { namespace, key, id, sumValue });
 // or delete values that were previously added
-await aggregate.delete(ctx, { key, id });
+await aggregate.delete(ctx, { namespace, key, id });
 // or update values
-await aggregate.replace(ctx, { key: oldKey, id }, { key: newKey });
+await aggregate.replace(
+  ctx,
+  { namespace, key: oldKey, id },
+  { namespace, key: newKey },
+);
 ```
 
 See [`example/convex/stats.ts`](example/convex/stats.ts) for an example.
+
+### Defining multiple aggregates
+
+You can aggregate multiple tables, multiple sort keys, or multiple values by
+defining multiple aggregates in one component. Give each aggregate its own
+namespaces by starting every namespace with a name for that aggregate. This
+works for both `TableAggregate` and `DirectAggregate`.
+
+```ts
+const aggregateScores = new TableAggregate<{
+  Namespace: "scores";
+  Key: number;
+  DataModel: DataModel;
+  TableName: "scores";
+}>(components.aggregate, {
+  namespace: () => "scores",
+  sortKey: (doc) => doc.score,
+});
+const aggregateByGame = new TableAggregate<{
+  Namespace: ["byGame", Id<"games">];
+  Key: number;
+  DataModel: DataModel;
+  TableName: "scores";
+}>(components.aggregate, {
+  namespace: (doc) => ["byGame", doc.gameId],
+  sortKey: (doc) => doc.score,
+});
+const latencies = new DirectAggregate<{
+  Namespace: "latencies";
+  Key: number;
+  Id: string;
+}>(components.aggregate);
+```
+
+Each namespace has its own internal data structure, so these aggregates don't
+interfere with each other. Pass the full namespace whenever you read from one:
+
+```ts
+const totalScores = await aggregateScores.count(ctx, { namespace: "scores" });
+const gameScores = await aggregateByGame.count(ctx, {
+  namespace: ["byGame", gameId],
+});
+```
+
+Keep in mind that the component doesn't know which namespaces belong to which
+aggregate:
+
+- Make sure two aggregates can never produce the same namespace. Starting each
+  namespace with a different name guarantees this.
+- `clearAll`, `makeAllRootsLazy`, `iterNamespaces`, and `paginateNamespaces`
+  operate on every namespace in the component, including those of other
+  aggregates. To clear one aggregate, call `clear(ctx, { namespace })` for each
+  of its namespaces instead.
+- An aggregate defined without a namespace stores its data in the `undefined`
+  namespace, so only one aggregate per component should omit `namespace`. If you
+  already have such an aggregate, you can add namespaced aggregates to the same
+  component without migrating it.
+
+You can also install the component multiple times, giving each usage its own
+name, and use a separate instance for each aggregate:
+
+```ts
+// convex/convex.config.ts
+app.use(aggregate, { name: "aggregateScores" });
+app.use(aggregate, { name: "aggregateByGame" });
+```
 
 ## Operations
 
@@ -496,9 +563,10 @@ data without writing to the aggregate, they can get out of sync and the returned
 aggregates may be incorrect.
 
 The simplest way to fix is to start over. Either call
-`await aggregate.clear(ctx)` or rename the component like
-`app.use(aggregate, { name: "newName" })` which will reset it to be empty. Then
-follow the instructions from [above](#attach-aggregate-to-an-existing-table).
+`await aggregate.clear(ctx, { namespace })` for each of its namespaces, or
+change the name at the start of its namespaces, which points it at new, empty
+namespaces. Then follow the instructions from
+[above](#attach-aggregate-to-an-existing-table).
 
 There is an alternative which doesn't clear the aggregates: compare the source
 of truth to the aggregate table. You can use `db.query("mytable").paginate()` on
@@ -755,7 +823,29 @@ reads are still reactive to changes to the aggregate as the Batch Worker
 processes the queued writes.
 
 Note that you cannot mix the queued mode with the non-queued mode. If there are
-any writes queued, a non-stale read or non-async write will throw an error.
+any writes queued, a non-stale read or non-async write will throw an error. This
+applies across all aggregates in the component, so either all or none of the
+aggregates in a component should use `{ async: true }` writes and
+`{ stale: true }` reads. If you need both modes, install the component a second
+time under its own name, and use that instance for the queued aggregates:
+
+```ts
+// convex/convex.config.ts
+app.use(aggregate);
+app.use(aggregate, { name: "queuedAggregate" });
+```
+
+```ts
+const clicks = new TableAggregate<{
+  Namespace: "clicks";
+  Key: number;
+  DataModel: DataModel;
+  TableName: "clicks";
+}>(components.queuedAggregate, {
+  namespace: () => "clicks",
+  sortKey: (doc) => doc._creationTime,
+});
+```
 
 #### Dead-lettered writes
 
