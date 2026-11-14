@@ -443,11 +443,14 @@ including those of prefixed aggregates. For the same reason, `clearAll` requires
 a `namespacePrefix`. To clear every namespace in a component, use
 `clearComponent(ctx, components.aggregate)`.
 
+To move existing aggregates into a shared component, see
+[Migrate to a new aggregate](#migrate-to-a-new-aggregate).
+
 ## Operations
 
 You've set up your aggregate. Now let's see how to backfill it to account for
-existing data, keep the data in sync with mutations, or repair it when the data
-gets out of sync.
+existing data, migrate it to a new aggregate, keep the data in sync with
+mutations, or repair it when the data gets out of sync.
 
 ### Attach Aggregate to an existing table
 
@@ -468,6 +471,103 @@ ways to perform migrations, but here's an overview of one way:
 4. Now all of the data is represented in the `Aggregate`, you can start calling
    read methods like `aggregate.count(ctx)` and you can change the write methods
    back (`insertIfDoesNotExist` -> `insert` etc.).
+
+### Migrate to a new aggregate
+
+Some changes can't be made to an aggregate in place, because they change where
+or how its data is stored:
+
+- Changing its `sortKey`, `sumValue`, or `namespace`.
+- Moving it into a shared component with a `namespacePrefix`, or changing its
+  `namespacePrefix`.
+
+Instead, define a new aggregate next to the old one, fill it while the app keeps
+running, and then switch over. Until the switch, the old aggregate keeps serving
+reads.
+
+1. **Write to both.** Keep writing to the old aggregate as before, and write to
+   the new one with `idempotentTrigger` (or `insertIfDoesNotExist`,
+   `replaceOrInsert`, and `deleteIfExists`), which work even before the new
+   aggregate has the item being changed. Deploy.
+
+   ```ts
+   triggers.register("leaderboard", oldByScore.trigger());
+   triggers.register("leaderboard", newByScore.idempotentTrigger());
+   ```
+
+2. **Backfill the new aggregate** while the live writes continue. How depends on
+   where the data comes from:
+   - For a `TableAggregate`, walk the table with a
+     [migration](https://www.npmjs.com/package/@convex-dev/migrations), as when
+     [attaching an aggregate to an existing table](#attach-aggregate-to-an-existing-table):
+
+     ```ts
+     export const backfillByScore = migrations.define({
+       table: "leaderboard",
+       migrateOne: async (ctx, doc) => {
+         await newByScore.insertIfDoesNotExist(ctx, doc);
+       },
+     });
+     ```
+
+   - For a `DirectAggregate` whose items you compute from your tables, do the
+     same, computing each item the way your live writes do.
+   - For a `DirectAggregate` whose data only exists in the aggregate, copy the
+     items from the old aggregate a page at a time. Read the page and write it
+     in the same mutation: a live write that changes an item on the page then
+     conflicts with the copy and is retried, so the copy never writes an item
+     that's out of date.
+
+     ```ts
+     export const copyStats = internalMutation({
+       args: { cursor: v.optional(v.string()) },
+       handler: async (ctx, { cursor }) => {
+         const page = await oldStats.paginate(ctx, { cursor, pageSize: 100 });
+         for (const item of page.page) {
+           await newStats.insertIfDoesNotExist(ctx, item);
+         }
+         if (!page.isDone) {
+           await ctx.scheduler.runAfter(0, internal.stats.copyStats, {
+             cursor: page.cursor,
+           });
+         }
+       },
+     });
+     ```
+
+     For a namespaced aggregate, do this for each namespace from
+     `iterNamespaces`. Since there's no other copy of this data, it's worth
+     keeping data like this in a table instead, so the aggregate can be rebuilt
+     from it.
+
+3. **Check the new aggregate.** Compare it against the source of truth, such as
+   counts and sums per namespace or a pass over the table. If you changed the
+   `sortKey` or `sumValue`, the old aggregate's items won't match the new ones,
+   and if the old aggregate had drifted from the table, the new one will differ
+   from it because the backfill corrected it.
+4. **Read from the new aggregate.** Deploy.
+5. **Stop writing to the old aggregate,** and switch the new one back to
+   `trigger` (or `insert`, `replace`, and `delete`). Deploy.
+6. **Delete the old aggregate's data.** If it had a component of its own, remove
+   that component from `convex.config.ts`, deploy, and then
+   [delete it from the dashboard](#delete-an-aggregates-data). If it's a
+   prefixed aggregate in a shared component, call `clearAll` on it.
+
+Watch out for these cases:
+
+- **Old aggregate without a prefix.** Put the new aggregate in a different
+  component from the old one, such as a new
+  `app.use(aggregate, { name: "aggregates" })`. An aggregate without a prefix
+  sees every namespace in its component, so if the new aggregate shared that
+  component, copying the old aggregate's namespaces would pick up the new
+  aggregate's too, and you couldn't delete the old component's data without
+  deleting the new aggregate's.
+- **Queued writes.** While any writes are queued in a component, non-stale reads
+  and writes in that component throw. Copying from an aggregate with queued
+  writes needs `{ stale: true }` reads, which don't conflict with live writes,
+  so check and repair the new aggregate after the copy finishes, or pause the
+  queued writes while copying. Moving a queued aggregate into a shared component
+  also means every aggregate in that component has to use queued writes.
 
 ### Automatically update aggregate when table changes
 
