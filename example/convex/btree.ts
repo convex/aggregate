@@ -3,7 +3,7 @@
  * Demonstrates the underlying B-tree structure using the inspect dump function.
  */
 
-import { DirectAggregate } from "@convex-dev/aggregate";
+import { clearComponent, DirectAggregate } from "@convex-dev/aggregate";
 import { mutation, query, internalMutation } from "./_generated/server";
 import { api, components } from "./_generated/api";
 import { v } from "convex/values";
@@ -100,7 +100,7 @@ export const resetAll = internalMutation({
   args: {},
   returns: resetStatusValidator,
   handler: async (ctx): Promise<"all_reset" | "partial_reset"> => {
-    await btreeAggregate.clearAll(ctx);
+    await clearComponent(ctx, components.btreeAggregate);
     return "all_reset";
   },
 });

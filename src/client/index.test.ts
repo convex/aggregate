@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { DirectAggregate, TableAggregate } from "./index.js";
+import { clearComponent, DirectAggregate, TableAggregate } from "./index.js";
 import {
   components,
   componentSchema,
@@ -271,7 +271,7 @@ describe("TableAggregate", () => {
     });
   });
 
-  describe("clearAll", () => {
+  describe("clearComponent", () => {
     let t: ConvexTest;
     let aggregate: ReturnType<typeof createAggregates>["aggregate"];
 
@@ -285,9 +285,9 @@ describe("TableAggregate", () => {
       vi.useRealTimers();
     });
 
-    const exec = async (_aggregate = aggregate) => {
+    const exec = async () => {
       await t.run(async (ctx) => {
-        await _aggregate.clearAll(ctx);
+        await clearComponent(ctx, components.aggregate);
       });
       // Wait for scheduled cleanup functions to complete
       // if we dont do this vitest will hang
@@ -357,7 +357,7 @@ describe("TableAggregate", () => {
       });
       expect(countAfter).toBe(0);
 
-      // Verify we can call clearAll again without errors
+      // Verify we can clear again without errors
       await exec();
 
       const countAfterSecondClear = await t.run(async (ctx) => {
@@ -1434,5 +1434,56 @@ describe("namespacePrefix", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("clearAll and clearComponent", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("clearAll throws without a namespacePrefix", async () => {
+    const t = setupTest();
+    const { aggregate } = createAggregates();
+    await expect(
+      t.run(async (ctx) => {
+        await aggregate.clearAll(ctx);
+      }),
+    ).rejects.toThrow("clearAll requires a namespacePrefix");
+  });
+
+  test("clearComponent clears every aggregate across many namespaces", async () => {
+    const t = setupTest();
+    const unprefixed = new DirectAggregate<{
+      Namespace: string;
+      Key: number;
+      Id: string;
+    }>(components.aggregate);
+    const prefixed = new DirectAggregate<{ Key: number; Id: string }>(
+      components.aggregate,
+      { namespacePrefix: "prefixed" },
+    );
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 150; i++) {
+        await unprefixed.insert(ctx, { namespace: `ns${i}`, key: 1, id: "a" });
+      }
+      await prefixed.insert(ctx, { key: 1, id: "a" });
+    });
+
+    await t.run(async (ctx) => {
+      await clearComponent(ctx, components.aggregate);
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await t.run(async (ctx) => {
+      expect(await unprefixed.count(ctx, { namespace: "ns0" })).toBe(0);
+      expect(await unprefixed.count(ctx, { namespace: "ns149" })).toBe(0);
+      expect(await prefixed.count(ctx)).toBe(0);
+      await unprefixed.insert(ctx, { namespace: "ns0", key: 2, id: "b" });
+      expect(await unprefixed.count(ctx, { namespace: "ns0" })).toBe(1);
+    });
   });
 });

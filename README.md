@@ -438,8 +438,10 @@ and `clearAll` only cover the aggregate's own namespaces.
 The `namespacePrefix` determines where an aggregate's data is stored, so
 changing it points the aggregate at a new, empty one. Aggregates defined without
 a `namespacePrefix` store their data under the namespaces you give them
-directly, and their `iterNamespaces` and `clearAll` cover every namespace in the
-component, including those of prefixed aggregates.
+directly, and their `iterNamespaces` covers every namespace in the component,
+including those of prefixed aggregates. For the same reason, `clearAll` requires
+a `namespacePrefix`. To clear every namespace in a component, use
+`clearComponent(ctx, components.aggregate)`.
 
 ## Operations
 
@@ -518,10 +520,26 @@ If some mutation or direct write in the Dashboard updated the source of truth
 data without writing to the aggregate, they can get out of sync and the returned
 aggregates may be incorrect.
 
-The simplest way to fix is to start over. Either call
-`await aggregate.clearAll(ctx)` or change its `namespacePrefix` to a new prefix,
-which starts out empty. Then follow the instructions from
-[above](#attach-aggregate-to-an-existing-table).
+The simplest way to fix is to start over with an empty aggregate, then follow
+the instructions from [above](#attach-aggregate-to-an-existing-table):
+
+- Change its `namespacePrefix` to a new prefix, or for an aggregate without one,
+  install the component under a new name like
+  `app.use(aggregate, { name: "newName" })`. The new prefix or component starts
+  out empty.
+- Or clear it in place with `await aggregate.clearAll(ctx)`. For an aggregate
+  without a `namespacePrefix`, use
+  `await clearComponent(ctx, components.aggregate)`, which clears every
+  aggregate in that component. These delete the aggregate's data a document at a
+  time within one transaction, so they're best for small aggregates.
+
+### Delete an aggregate's data
+
+To get rid of a whole component's data, such as an old component you've stopped
+using, remove it from `convex.config.ts` and deploy. That only unmounts the
+component and keeps its data, so then delete it from the dashboard under
+**Deployment Settings → Components**, which removes the component's tables at
+once instead of clearing them a document at a time.
 
 There is an alternative which doesn't clear the aggregates: compare the source
 of truth to the aggregate table. You can use `db.query("mytable").paginate()` on

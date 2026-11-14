@@ -4,6 +4,10 @@
 
 - Support multiple independent aggregates in one component instance: pass
   `namespacePrefix` when constructing a `TableAggregate` or `DirectAggregate`.
+- Breaking: `clearAll` now requires a `namespacePrefix`, so it can't clear other
+  aggregates in the same component. To clear every namespace in a component, use
+  the new `clearComponent(ctx, components.aggregate)`.
+- Fix `clearAll` never finishing when a component has more than 100 namespaces.
 
 ## 0.3.3
 
