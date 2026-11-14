@@ -840,12 +840,27 @@ export class Aggregate<
     });
   }
 
+  private _requirePrefix(method: string, replacement: string) {
+    if (this.namespacePrefix === undefined) {
+      throw new Error(
+        `${method} requires a namespacePrefix. To cover every namespace in the ` +
+          `component, including other aggregates', use ${replacement}.`,
+      );
+    }
+  }
+
+  /**
+   * Gets a page of this aggregate's namespaces. The aggregate must have a
+   * `namespacePrefix`. To list every namespace in a component, use
+   * {@link paginateComponentNamespaces}.
+   */
   async paginateNamespaces(
     ctx: QueryCtx | MutationCtx | ActionCtx,
     cursor?: string,
     pageSize: number = 100,
     stale?: boolean,
   ): Promise<{ page: Namespace[]; cursor: string; isDone: boolean }> {
+    this._requirePrefix("paginateNamespaces", "paginateComponentNamespaces");
     const {
       page,
       cursor: newCursor,
@@ -862,40 +877,37 @@ export class Aggregate<
       stale,
     );
     return {
-      page:
-        this.namespacePrefix === undefined
-          ? (page as Namespace[])
-          : page.map((ns: ConvexValue[]) => ns[1] as Namespace),
+      page: page.map((ns: ConvexValue[]) => ns[1] as Namespace),
       cursor: newCursor,
       isDone,
     };
   }
 
+  /**
+   * Iterates over this aggregate's namespaces. The aggregate must have a
+   * `namespacePrefix`. To iterate over every namespace in a component, use
+   * {@link iterComponentNamespaces}.
+   */
   async *iterNamespaces(
     ctx: QueryCtx | MutationCtx | ActionCtx,
     pageSize: number = 100,
     stale?: boolean,
   ): AsyncGenerator<Namespace, void, undefined> {
-    let isDone = false;
-    let cursor: string | undefined = undefined;
-    while (!isDone) {
-      const {
-        page,
-        cursor: newCursor,
-        isDone: newIsDone,
-      } = await this.paginateNamespaces(ctx, cursor, pageSize, stale);
-      for (const item of page) {
-        yield item ?? (undefined as Namespace);
-      }
-      isDone = newIsDone;
-      cursor = newCursor;
-    }
+    this._requirePrefix("iterNamespaces", "iterComponentNamespaces");
+    yield* iterPages((cursor) =>
+      this.paginateNamespaces(ctx, cursor, pageSize, stale),
+    );
   }
 
+  /**
+   * Clears every namespace of this aggregate. The aggregate must have a `namespacePrefix`.
+   * To clear every namespace in a component, use {@link clearComponent}, or unmount the component and delete its tables from the dashboard.
+   */
   async clearAll(
     ctx: MutationCtx | ActionCtx,
     opts?: { maxNodeSize?: number; rootLazy?: boolean },
   ): Promise<void> {
+    this._requirePrefix("clearAll", "clearComponent");
     for await (const namespace of this.iterNamespaces(ctx)) {
       await this.clear(ctx, { ...opts, namespace });
     }
@@ -904,10 +916,107 @@ export class Aggregate<
     await this.clear(ctx, { ...opts, namespace: undefined as Namespace });
   }
 
+  /**
+   * Makes the root of every namespace of this aggregate lazy. The aggregate
+   * must have a `namespacePrefix`. To cover every namespace in a component, use
+   * {@link makeComponentRootsLazy}.
+   */
   async makeAllRootsLazy(ctx: MutationCtx | ActionCtx): Promise<void> {
+    this._requirePrefix("makeAllRootsLazy", "makeComponentRootsLazy");
     for await (const namespace of this.iterNamespaces(ctx)) {
       await this.makeRootLazy(ctx, namespace);
     }
+  }
+}
+
+/**
+ * Clears every namespace in the component, including those of every aggregate
+ * that shares it, and resets the default settings for new namespaces.
+ *
+ * This iterates through every document in the component. For large aggregates, unmount the component and delete its tables from the dashboard.
+ */
+export async function clearComponent(
+  ctx: MutationCtx | ActionCtx,
+  component: ComponentApi,
+  opts?: { maxNodeSize?: number; rootLazy?: boolean },
+): Promise<void> {
+  for await (const namespace of iterComponentNamespaces(ctx, component)) {
+    await ctx.runMutation(component.public.clear, { ...opts, namespace });
+  }
+  await ctx.runMutation(component.public.clear, {
+    ...opts,
+    namespace: undefined,
+  });
+}
+
+/**
+ * Gets a page of every namespace in the component, including those of every
+ * aggregate that shares it. Prefixed aggregates' namespaces are returned as
+ * stored, e.g. `[namespacePrefix, namespace]`.
+ */
+export async function paginateComponentNamespaces(
+  ctx: QueryCtx | MutationCtx | ActionCtx,
+  component: ComponentApi,
+  cursor?: string,
+  pageSize: number = 100,
+  stale?: boolean,
+): Promise<{
+  page: (ConvexValue | undefined)[];
+  cursor: string;
+  isDone: boolean;
+}> {
+  return await runQuery(
+    ctx,
+    component.btree.paginateNamespaces,
+    { cursor, limit: pageSize, stale },
+    stale,
+  );
+}
+
+/**
+ * Iterates over every namespace in the component, including those of every
+ * aggregate that shares it. Prefixed aggregates' namespaces are returned as
+ * stored, e.g. `[namespacePrefix, namespace]`.
+ */
+export async function* iterComponentNamespaces(
+  ctx: QueryCtx | MutationCtx | ActionCtx,
+  component: ComponentApi,
+  pageSize: number = 100,
+  stale?: boolean,
+): AsyncGenerator<ConvexValue | undefined, void, undefined> {
+  yield* iterPages((cursor) =>
+    paginateComponentNamespaces(ctx, component, cursor, pageSize, stale),
+  );
+}
+
+/**
+ * Makes the root of every namespace in the component lazy, including those of
+ * every aggregate that shares it.
+ */
+export async function makeComponentRootsLazy(
+  ctx: MutationCtx | ActionCtx,
+  component: ComponentApi,
+): Promise<void> {
+  for await (const namespace of iterComponentNamespaces(ctx, component)) {
+    await ctx.runMutation(component.public.makeRootLazy, { namespace });
+  }
+}
+
+async function* iterPages<T>(
+  fetchPage: (
+    cursor: string | undefined,
+  ) => Promise<{ page: T[]; cursor: string; isDone: boolean }>,
+): AsyncGenerator<T, void, undefined> {
+  let isDone = false;
+  let cursor: string | undefined = undefined;
+  while (!isDone) {
+    const result: { page: T[]; cursor: string; isDone: boolean } =
+      await fetchPage(cursor);
+    for (const item of result.page) {
+      yield item ?? (undefined as T);
+    }
+    isDone = result.isDone;
+    cursor = result.cursor;
   }
 }
 

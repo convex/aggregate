@@ -7,7 +7,7 @@
  * Also demonstrates aggregates automatically updating when the underlying table changes.
  */
 
-import { TableAggregate } from "@convex-dev/aggregate";
+import { clearComponent, TableAggregate } from "@convex-dev/aggregate";
 import {
   internalMutation as rawInternalMutation,
   mutation as rawMutation,
@@ -140,7 +140,7 @@ export const resetAll = internalMutation({
 
     if (docs.length === batchSize) return "partial_reset";
 
-    await photos.clearAll(ctx, {
+    await clearComponent(ctx, components.photos, {
       maxNodeSize: 4,
       rootLazy: false,
     });

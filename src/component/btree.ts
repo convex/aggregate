@@ -1083,6 +1083,25 @@ export async function getOrCreateTree(
   return newTree!;
 }
 
+/**
+ * Replaces the tree's root with an empty one, keeping the btree document's _id
+ * the same. The caller is responsible for deleting the old root's nodes.
+ */
+export async function resetTree(
+  db: DatabaseWriter,
+  tree: Doc<"btree">,
+  maxNodeSize: number,
+  rootLazy: boolean,
+): Promise<void> {
+  const root = await db.insert("btreeNode", {
+    items: [],
+    subtrees: [],
+    aggregate: rootLazy ? undefined : { count: 0, sum: 0 },
+  });
+  await db.patch("btree", tree._id, { root, maxNodeSize });
+  await MIN_NODE_SIZE({ db }, tree.namespace);
+}
+
 async function isRootLazy(
   db: DatabaseReader,
   namespace: Namespace,

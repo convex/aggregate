@@ -4,6 +4,13 @@
 
 - Support multiple independent aggregates in one component instance: pass
   `namespacePrefix` when constructing a `TableAggregate` or `DirectAggregate`.
+- Breaking: `clearAll`, `makeAllRootsLazy`, `iterNamespaces`, and
+  `paginateNamespaces` now require a `namespacePrefix`, so they can't reach
+  other aggregates in the same component. To cover every namespace in a
+  component, use the new `clearComponent`, `makeComponentRootsLazy`,
+  `iterComponentNamespaces`, and `paginateComponentNamespaces`, e.g.
+  `clearComponent(ctx, components.aggregate)`.
+- Fix `clearAll` never finishing when a component has more than 100 namespaces.
 
 ## 0.3.3
 
