@@ -892,10 +892,22 @@ export class Aggregate<
     }
   }
 
+  /**
+   * Clears every namespace of this aggregate. Requires a `namespacePrefix`,
+   * since without one this aggregate's namespaces can't be told apart from
+   * those of other aggregates in the same component. To clear every namespace
+   * in a component, use {@link clearComponent}.
+   */
   async clearAll(
     ctx: MutationCtx | ActionCtx,
     opts?: { maxNodeSize?: number; rootLazy?: boolean },
   ): Promise<void> {
+    if (this.namespacePrefix === undefined) {
+      throw new Error(
+        "clearAll requires a namespacePrefix. To clear every namespace in the " +
+          "component, including other aggregates', use clearComponent.",
+      );
+    }
     for await (const namespace of this.iterNamespaces(ctx)) {
       await this.clear(ctx, { ...opts, namespace });
     }
@@ -909,6 +921,29 @@ export class Aggregate<
       await this.makeRootLazy(ctx, namespace);
     }
   }
+}
+
+/**
+ * Clears every namespace in the component, including those of every aggregate
+ * that shares it, and resets the default settings for new namespaces.
+ *
+ * This deletes the data a document at a time within the caller's transaction,
+ * so it's meant for small components. To discard a large component's data,
+ * remove it from convex.config.ts and delete it from the dashboard under
+ * Deployment Settings → Components.
+ */
+export async function clearComponent(
+  ctx: MutationCtx | ActionCtx,
+  component: ComponentApi,
+  opts?: { maxNodeSize?: number; rootLazy?: boolean },
+): Promise<void> {
+  const aggregate = new Aggregate<Key, string, ConvexValue | undefined>(
+    component,
+  );
+  for await (const namespace of aggregate.iterNamespaces(ctx)) {
+    await aggregate.clear(ctx, { ...opts, namespace });
+  }
+  await aggregate.clear(ctx, { ...opts, namespace: undefined });
 }
 
 export type DirectAggregateType<

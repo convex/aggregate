@@ -3,7 +3,7 @@
  * implemented with Convex.
  */
 
-import { TableAggregate } from "@convex-dev/aggregate";
+import { clearComponent, TableAggregate } from "@convex-dev/aggregate";
 import {
   mutation,
   query,
@@ -173,7 +173,7 @@ export const resetAll = internalMutation({
       return "partial_reset";
     }
 
-    await randomize.clearAll(ctx);
+    await clearComponent(ctx, components.music);
     console.log("Shuffle/music reset complete");
     return "all_reset";
   },

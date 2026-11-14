@@ -10,6 +10,7 @@ import {
   insertHandler,
   replaceHandler,
   replaceOrInsertHandler,
+  resetTree,
 } from "./btree.js";
 import { enqueueOperations } from "./worker.js";
 import { internal } from "./_generated/api.js";
@@ -155,22 +156,24 @@ export const clear = mutation({
   handler: async (ctx, { maxNodeSize, rootLazy, namespace }) => {
     await assertNoPendingOperations(ctx);
     const tree = await getTree(ctx.db, namespace);
-    let existingRootLazy = true;
-    let existingMaxNodeSize = DEFAULT_MAX_NODE_SIZE;
-    if (tree) {
-      await ctx.db.delete("btree", tree._id);
-      const root = (await ctx.db.get("btreeNode", tree.root))!;
-      existingRootLazy = root.aggregate === undefined;
-      existingMaxNodeSize = tree.maxNodeSize;
-      await ctx.scheduler.runAfter(0, internal.btree.deleteTreeNodes, {
-        node: tree.root,
-      });
+    if (!tree) {
+      await getOrCreateTree(
+        ctx.db,
+        namespace,
+        maxNodeSize ?? DEFAULT_MAX_NODE_SIZE,
+        rootLazy ?? true,
+      );
+      return;
     }
-    await getOrCreateTree(
+    const oldRoot = (await ctx.db.get("btreeNode", tree.root))!;
+    await resetTree(
       ctx.db,
-      namespace,
-      maxNodeSize ?? existingMaxNodeSize,
-      rootLazy ?? existingRootLazy,
+      tree,
+      maxNodeSize ?? tree.maxNodeSize,
+      rootLazy ?? oldRoot.aggregate === undefined,
     );
+    await ctx.scheduler.runAfter(0, internal.btree.deleteTreeNodes, {
+      node: oldRoot._id,
+    });
   },
 });
