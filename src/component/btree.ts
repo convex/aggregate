@@ -20,9 +20,9 @@ import {
   itemValidator,
 } from "./schema.js";
 import { internal } from "./_generated/api.js";
+import { getTreeDefaults, validateMaxNodeSize } from "./config.js";
 
 const BTREE_DEBUG = false;
-export const DEFAULT_MAX_NODE_SIZE = 16;
 
 export type Key = ConvexValue;
 export type Value = ConvexValue;
@@ -57,12 +57,7 @@ export async function insertHandler(
   ctx: { db: DatabaseWriter },
   args: { key: Key; value: Value; summand?: number; namespace?: Namespace },
 ) {
-  const tree = await getOrCreateTree(
-    ctx.db,
-    args.namespace,
-    DEFAULT_MAX_NODE_SIZE,
-    true,
-  );
+  const tree = await getOrCreateTree(ctx.db, args.namespace);
   const summand = args.summand ?? 0;
   const pushUp = await insertIntoNode(ctx, args.namespace, tree.root, {
     k: args.key,
@@ -92,12 +87,7 @@ export async function deleteHandler(
   ctx: { db: DatabaseWriter },
   args: { key: Key; namespace?: Namespace },
 ) {
-  const tree = await getOrCreateTree(
-    ctx.db,
-    args.namespace,
-    DEFAULT_MAX_NODE_SIZE,
-    true,
-  );
+  const tree = await getOrCreateTree(ctx.db, args.namespace);
   await deleteFromNode(ctx, args.namespace, tree.root, args.key);
   const root = (await ctx.db.get("btreeNode", tree.root))!;
   if (root.items.length === 0 && root.subtrees.length === 1) {
@@ -1055,43 +1045,22 @@ export async function getOrCreateTree(
   if (originalTree) {
     return originalTree;
   }
+  const defaults = await getTreeDefaults(db);
+  const effectiveMaxNodeSize = maxNodeSize ?? defaults.maxNodeSize;
+  validateMaxNodeSize(effectiveMaxNodeSize);
+  const effectiveRootLazy = rootLazy ?? defaults.rootLazy;
   const root = await db.insert("btreeNode", {
     items: [],
     subtrees: [],
-    aggregate: {
-      count: 0,
-      sum: 0,
-    },
+    aggregate: effectiveRootLazy ? undefined : { count: 0, sum: 0 },
   });
-  const effectiveMaxNodeSize =
-    maxNodeSize ??
-    (await MAX_NODE_SIZE({ db }, undefined)) ??
-    DEFAULT_MAX_NODE_SIZE;
-  const effectiveRootLazy =
-    rootLazy ?? (await isRootLazy(db, undefined)) ?? true;
   const id = await db.insert("btree", {
     root,
     maxNodeSize: effectiveMaxNodeSize,
     namespace,
   });
   const newTree = await db.get("btree", id);
-  // Check the maxNodeSize is valid.
-  await MIN_NODE_SIZE({ db }, namespace);
-  if (effectiveRootLazy) {
-    await db.patch("btreeNode", root, { aggregate: undefined });
-  }
   return newTree!;
-}
-
-async function isRootLazy(
-  db: DatabaseReader,
-  namespace: Namespace,
-): Promise<boolean> {
-  const tree = await getTree(db, namespace);
-  if (!tree) {
-    return true;
-  }
-  return (await db.get("btreeNode", tree.root))?.aggregate === undefined;
 }
 
 export const deleteTreeNodes = internalMutation({

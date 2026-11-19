@@ -9,13 +9,18 @@ const modules = import.meta.glob("./component/**/*.ts");
  * Register the component with the test convex instance.
  * @param t - The test convex instance, e.g. from calling `convexTest`.
  * @param name - The name of the component, as registered in convex.config.ts.
+ * @param args - Install args for the component's init, in place of the ones
+ *   the app's convex.config.ts passes.
  * @returns a component api to test via ctx.runMutation or for thick client
  *   usage. Also provides types for convex-test's defineTestApp.
  */
 export function register(
   t: TestConvex<SchemaDefinition<GenericSchema, boolean>>,
   name: string = "aggregate",
+  args?: { maxNodeSize?: number; rootLazy?: boolean },
 ) {
-  return t.registerComponent(name, schema, modules) as unknown as ComponentApi;
+  return t.registerComponent(name, schema, modules, {
+    args,
+  }) as unknown as ComponentApi;
 }
 export default { register, schema, modules };

@@ -849,6 +849,10 @@ describe("transaction limits", () => {
       documentsWritten: 16_000,
       functionsScheduled: 1_000,
       scheduledFunctionArgsBytes: 16 * 1024 * 1024,
+      filesWritten: 1_000,
+      fileWriteBytes: 16 * 1024 * 1024,
+      filesRead: 1_000,
+      fileReadBytes: 16 * 1024 * 1024,
     } satisfies Record<keyof TransactionMetrics, number>;
 
     // A fresh transaction's metrics with specific limits overridden to whatever

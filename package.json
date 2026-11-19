@@ -87,7 +87,7 @@
     "@vitest/coverage-v8": "4.1.10",
     "@xyflow/react": "12.11.2",
     "chokidar-cli": "3.0.0",
-    "convex": "1.46.0",
+    "convex": "https://pkg.pr.new/convex/convex@5d68b26",
     "convex-test": "0.0.64",
     "eslint": "9.39.5",
     "eslint-plugin-react-hooks": "7.1.1",

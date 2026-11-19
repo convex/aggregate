@@ -12,16 +12,10 @@ const modules = import.meta.glob("./**/*.ts");
 describe("leaderboard", () => {
   async function setupTest() {
     const t = convexTest(schema, modules);
-    register(t, "aggregateByScore");
-    register(t, "aggregateScoreByUser");
-    migrations.register(t);
     // Reduce maxNodeSize so we can test complex trees with fewer items.
-    await t.mutation(components.aggregateByScore.public.clear, {
-      maxNodeSize: 4,
-    });
-    await t.mutation(components.aggregateScoreByUser.public.clear, {
-      maxNodeSize: 4,
-    });
+    register(t, "aggregateByScore", { maxNodeSize: 4 });
+    register(t, "aggregateScoreByUser", { maxNodeSize: 4 });
+    migrations.register(t);
     return t;
   }
 
@@ -190,7 +184,7 @@ describe("photos", () => {
 describe("shuffle", () => {
   async function setupTest() {
     const t = convexTest(schema, modules);
-    register(t, "music");
+    register(t, "music", { maxNodeSize: 4 });
     return t;
   }
 
@@ -198,7 +192,6 @@ describe("shuffle", () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     t = await setupTest();
-    await t.mutation(components.music.public.clear, { maxNodeSize: 4 });
   });
   afterEach(async () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -256,8 +249,7 @@ describe("shuffle", () => {
 describe("stats", () => {
   async function setupTest() {
     const t = convexTest(schema, modules);
-    register(t, "stats");
-    await t.mutation(components.stats.public.clear, { maxNodeSize: 4 });
+    register(t, "stats", { maxNodeSize: 4 });
     return t;
   }
   let t: Awaited<ReturnType<typeof setupTest>>;
