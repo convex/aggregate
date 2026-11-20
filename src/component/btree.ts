@@ -20,7 +20,7 @@ import {
   itemValidator,
 } from "./schema.js";
 import { internal } from "./_generated/api.js";
-import { getTreeDefaults, validateMaxNodeSize } from "./config.js";
+import { DEFAULT_MAX_NODE_SIZE, getConfig } from "./config.js";
 
 const BTREE_DEBUG = false;
 
@@ -1045,22 +1045,45 @@ export async function getOrCreateTree(
   if (originalTree) {
     return originalTree;
   }
-  const defaults = await getTreeDefaults(db);
-  const effectiveMaxNodeSize = maxNodeSize ?? defaults.maxNodeSize;
-  validateMaxNodeSize(effectiveMaxNodeSize);
-  const effectiveRootLazy = rootLazy ?? defaults.rootLazy;
   const root = await db.insert("btreeNode", {
     items: [],
     subtrees: [],
-    aggregate: effectiveRootLazy ? undefined : { count: 0, sum: 0 },
+    aggregate: {
+      count: 0,
+      sum: 0,
+    },
   });
+  const config = await getConfig(db);
+  const effectiveMaxNodeSize =
+    maxNodeSize ??
+    config?.maxNodeSize ??
+    (await getTree(db, undefined))?.maxNodeSize ??
+    DEFAULT_MAX_NODE_SIZE;
+  const effectiveRootLazy =
+    rootLazy ?? config?.rootLazy ?? (await isRootLazy(db, undefined));
   const id = await db.insert("btree", {
     root,
     maxNodeSize: effectiveMaxNodeSize,
     namespace,
   });
   const newTree = await db.get("btree", id);
+  // Check the maxNodeSize is valid.
+  await MIN_NODE_SIZE({ db }, namespace);
+  if (effectiveRootLazy) {
+    await db.patch("btreeNode", root, { aggregate: undefined });
+  }
   return newTree!;
+}
+
+async function isRootLazy(
+  db: DatabaseReader,
+  namespace: Namespace,
+): Promise<boolean> {
+  const tree = await getTree(db, namespace);
+  if (!tree) {
+    return true;
+  }
+  return (await db.get("btreeNode", tree.root))?.aggregate === undefined;
 }
 
 export const deleteTreeNodes = internalMutation({

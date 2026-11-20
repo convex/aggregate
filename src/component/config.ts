@@ -4,7 +4,6 @@ import type { DatabaseReader, MutationCtx } from "./_generated/server.js";
 import { internalMutation } from "./_generated/server.js";
 
 export const DEFAULT_MAX_NODE_SIZE = 16;
-export const DEFAULT_ROOT_LAZY = true;
 
 export const vTreeConfig = v.object({
   maxNodeSize: v.optional(v.number()),
@@ -27,7 +26,6 @@ export function validateMaxNodeSize(maxNodeSize: number) {
  * Stores the install-time defaults for trees created from now on. Existing
  * trees keep the maxNodeSize and root laziness they were built with: changing
  * them means rebuilding the tree, which can't fit in the push transaction.
- * Run `clearAll` and backfill to rebuild with new args.
  *
  * Only writes when the args change, since every tree creation reads this
  * document and a write on each push would conflict with those mutations.
@@ -59,10 +57,6 @@ export const init = internalMutation({
   },
 });
 
-export async function getTreeDefaults(db: DatabaseReader) {
-  const config = await db.query("config").unique();
-  return {
-    maxNodeSize: config?.maxNodeSize ?? DEFAULT_MAX_NODE_SIZE,
-    rootLazy: config?.rootLazy ?? DEFAULT_ROOT_LAZY,
-  };
+export async function getConfig(db: DatabaseReader) {
+  return await db.query("config").unique();
 }

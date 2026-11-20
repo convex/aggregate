@@ -140,7 +140,10 @@ export const resetAll = internalMutation({
 
     if (docs.length === batchSize) return "partial_reset";
 
-    await photos.clearAll(ctx);
+    await photos.clearAll(ctx, {
+      maxNodeSize: 4,
+      rootLazy: false,
+    });
     return "all_reset";
   },
 });

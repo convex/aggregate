@@ -77,7 +77,7 @@ describe("install args", () => {
     expect(await trees(t)).toEqual({ a: { maxNodeSize: 16, rootLazy: true } });
   });
 
-  test("changed args apply to new trees and to cleared trees, not existing ones", async () => {
+  test("changed args apply to new trees, not existing or cleared ones", async () => {
     const t = setup({ maxNodeSize: 4 });
     await t.run((ctx) =>
       aggregate.insert(ctx, { namespace: "old", key: 1, id: "1" }),
@@ -96,7 +96,35 @@ describe("install args", () => {
 
     await t.run((ctx) => aggregate.clear(ctx, { namespace: "old" }));
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    expect((await trees(t)).old).toEqual({ maxNodeSize: 8, rootLazy: false });
+    expect((await trees(t)).old).toEqual({ maxNodeSize: 4, rootLazy: true });
+  });
+
+  test("new trees fall back to the default-namespace tree, below the install args", async () => {
+    const withoutArgs = setup();
+    await withoutArgs.mutation(components.aggregate.public.clear, {
+      maxNodeSize: 4,
+      rootLazy: false,
+    });
+    await withoutArgs.run((ctx) =>
+      aggregate.insert(ctx, { namespace: "a", key: 1, id: "1" }),
+    );
+    expect((await trees(withoutArgs)).a).toEqual({
+      maxNodeSize: 4,
+      rootLazy: false,
+    });
+
+    const withArgs = setup({ maxNodeSize: 8 });
+    await withArgs.mutation(components.aggregate.public.clear, {
+      maxNodeSize: 4,
+      rootLazy: false,
+    });
+    await withArgs.run((ctx) =>
+      aggregate.insert(ctx, { namespace: "a", key: 1, id: "1" }),
+    );
+    expect((await trees(withArgs)).a).toEqual({
+      maxNodeSize: 8,
+      rootLazy: false,
+    });
   });
 
   test("an explicit clear option overrides the install args", async () => {
