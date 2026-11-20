@@ -36,11 +36,13 @@ export const vOperation = v.union(
     value: v.any(),
     summand: v.optional(v.number()),
     namespace: v.optional(v.any()),
+    name: v.optional(v.string()),
   }),
   v.object({
     type: v.literal("delete"),
     key: v.any(),
     namespace: v.optional(v.any()),
+    name: v.optional(v.string()),
   }),
   v.object({
     type: v.literal("replace"),
@@ -50,11 +52,13 @@ export const vOperation = v.union(
     summand: v.optional(v.number()),
     namespace: v.optional(v.any()),
     newNamespace: v.optional(v.any()),
+    name: v.optional(v.string()),
   }),
   v.object({
     type: v.literal("deleteIfExists"),
     key: v.any(),
     namespace: v.optional(v.any()),
+    name: v.optional(v.string()),
   }),
   v.object({
     type: v.literal("replaceOrInsert"),
@@ -64,24 +68,21 @@ export const vOperation = v.union(
     summand: v.optional(v.number()),
     namespace: v.optional(v.any()),
     newNamespace: v.optional(v.any()),
+    name: v.optional(v.string()),
   }),
 );
 
 export type Operation = Infer<typeof vOperation>;
 
 export default defineSchema({
-  // One per namespace
+  // One per (name, namespace). Trees with no name belong to the unnamed
+  // aggregate.
   btree: defineTable({
     root: v.id("btreeNode"),
+    name: v.optional(v.string()),
     namespace: v.optional(v.any()),
     maxNodeSize: v.number(),
-    name: v.optional(v.string()),
-  })
-    .index("by_namespace", ["namespace"])
-    .index("by_name_namespace", {
-      fields: ["name", "namespace"],
-      staged: true,
-    }),
+  }).index("by_name_namespace", ["name", "namespace"]),
   btreeNode: defineTable({
     items: v.array(item),
     subtrees: v.array(v.id("btreeNode")),
