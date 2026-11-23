@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { mutation } from "./_generated/server.js";
+import { DEFAULT_MAX_NODE_SIZE } from "./config.js";
 import {
   assertNoPendingOperations,
-  DEFAULT_MAX_NODE_SIZE,
   deleteHandler,
   deleteIfExistsHandler,
   getOrCreateTree,
@@ -27,12 +27,7 @@ export const init = mutation({
     if (existing) {
       throw new Error("tree already initialized");
     }
-    await getOrCreateTree(
-      ctx.db,
-      namespace,
-      maxNodeSize ?? DEFAULT_MAX_NODE_SIZE,
-      rootLazy ?? true,
-    );
+    await getOrCreateTree(ctx.db, namespace, maxNodeSize, rootLazy);
   },
 });
 
@@ -155,8 +150,8 @@ export const clear = mutation({
   handler: async (ctx, { maxNodeSize, rootLazy, namespace }) => {
     await assertNoPendingOperations(ctx);
     const tree = await getTree(ctx.db, namespace);
-    let existingRootLazy = true;
-    let existingMaxNodeSize = DEFAULT_MAX_NODE_SIZE;
+    let existingRootLazy: boolean | undefined;
+    let existingMaxNodeSize: number | undefined;
     if (tree) {
       await ctx.db.delete("btree", tree._id);
       const root = (await ctx.db.get("btreeNode", tree.root))!;

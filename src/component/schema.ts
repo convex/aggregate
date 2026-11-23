@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { type Value as ConvexValue, type Infer, v } from "convex/values";
+import { vTreeConfig } from "./config.js";
 
 const item = v.object({
   // key, usually an index key.
@@ -70,6 +71,8 @@ export const vOperation = v.union(
 export type Operation = Infer<typeof vOperation>;
 
 export default defineSchema({
+  // Singleton written by the component's init.
+  config: defineTable(vTreeConfig),
   // One per namespace
   btree: defineTable({
     root: v.id("btreeNode"),

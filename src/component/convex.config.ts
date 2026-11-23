@@ -1,8 +1,10 @@
 import { defineComponent } from "convex/server";
 import { v } from "convex/values";
 import batchWorker from "@convex-dev/batch-worker/convex.config.js";
+import { internal } from "./_generated/api.js";
 
 const component = defineComponent("aggregate", {
+  init: internal.config.init,
   env: {
     WORKER_IDLE_COOLDOWN_MS: v.optional(v.string()),
     WORKER_POLL_INTERVAL_MS: v.optional(v.string()),

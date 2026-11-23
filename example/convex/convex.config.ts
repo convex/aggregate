@@ -6,9 +6,12 @@ const app = defineApp();
 app.use(aggregate, { name: "aggregateByScore" });
 app.use(aggregate, { name: "aggregateScoreByUser" });
 app.use(aggregate, { name: "music" });
-app.use(aggregate, { name: "photos" });
+app.use(aggregate, {
+  name: "photos",
+  args: { maxNodeSize: 4, rootLazy: false },
+});
 app.use(aggregate, { name: "stats" });
-app.use(aggregate, { name: "btreeAggregate" });
+app.use(aggregate, { name: "btreeAggregate", args: { maxNodeSize: 32 } });
 
 app.use(migrations);
 
