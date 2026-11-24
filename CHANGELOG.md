@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.5
+
+### Patch Changes
+
+- Stage the index that 0.4.0 uses to look up trees by name, so it can backfill
+  before you upgrade. ([#292](https://github.com/convex/aggregate/issues/292))
+
+- Use Convex's built-in pagination for `deadLetter.list`
+  ([#279](https://github.com/convex/aggregate/issues/279)). Existing saved
+  cursors cannot be reused because the cursor format changes, and callers must
+  observe Convex's one-pagination-per-query limit when calling this function
+  from a query. ([#288](https://github.com/convex/aggregate/issues/288))
+
 ## 0.3.4
 
 - Add experimental configuration options for configuring the Aggregate's batch
