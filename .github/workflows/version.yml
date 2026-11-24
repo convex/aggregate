@@ -31,7 +31,7 @@ jobs:
           node-version: "24.22.1"
           package-manager-cache: false
       - run: npm ci --ignore-scripts
-      - uses: convex/npm-release-actions/version-pr@3a142e21f421319890981579b8952267bc11fc53 # v0.3.0
+      - uses: convex/npm-release-actions/version-pr@4f1f4ba9cd0e27de214a123d372cba38269934f2 # npm-release-actions#5 pilot
 
   tag:
     name: Tag a new version
