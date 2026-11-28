@@ -85,7 +85,7 @@
     "@typescript-eslint/eslint-plugin": "8.65.0",
     "@typescript-eslint/parser": "8.65.0",
     "@vitejs/plugin-react": "6.0.4",
-    "@vitest/coverage-v8": "4.1.10",
+    "@vitest/coverage-v8": "5.1.2",
     "@xyflow/react": "13.0.1",
     "chokidar-cli": "3.0.0",
     "convex": "1.46.0",
