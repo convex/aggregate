@@ -28,7 +28,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24.22.1"
+          node-version: "24.22.3"
           package-manager-cache: false
       - run: npm ci --ignore-scripts
       - uses: convex/npm-release-actions/version-pr@d7ee96fd9737c80793831e846bf8e529ace6c709 # npm-release-actions#5 pilot
